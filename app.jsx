@@ -214,7 +214,7 @@ async function dbAddProblem(p) {
   // Schema hiện tại đã có cột language; lưu cả language và is_python để tương thích dữ liệu cũ.
   const language = normalizeLanguage(p.language, p.isPython);
   const { error } = await supabase.from("problems").insert({
-    id: p.id, title: p.title, topic: p.topic, difficulty: p.difficulty, points: p.points,
+    id: p.id, title: p.title, topic: p.topic || null, difficulty: p.difficulty, points: p.points,
     language, is_python: language === "python", statement: p.statement, statement_image_url: p.imageUrl || null,
     sample_input: p.sample.input, sample_output: p.sample.output,
     test_cases: normalizeTestCases(p.testCases),
@@ -225,7 +225,7 @@ async function dbUpdateProblem(p) {
   // Cập nhật language để lần mở lại biểu mẫu giữ đúng Python, C hoặc C++ đã chọn.
   const language = normalizeLanguage(p.language, p.isPython);
   const { error } = await supabase.from("problems").update({
-    title: p.title, topic: p.topic, difficulty: p.difficulty, points: p.points,
+    title: p.title, topic: p.topic || null, difficulty: p.difficulty, points: p.points,
     language, is_python: language === "python", statement: p.statement, statement_image_url: p.imageUrl || null,
     sample_input: p.sample.input, sample_output: p.sample.output,
     test_cases: normalizeTestCases(p.testCases),
