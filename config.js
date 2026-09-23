@@ -4,4 +4,4 @@ export const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 
 
 export const SISTER_SITE_URL = "https://vanloi123.io.vn/";
-export const SISTER_SITE_LABEL = "Sang trang chính thức (đang dùng thật)";
+export const SISTER_SITE_LABEL = "Đội tuyển Tin học 11";
