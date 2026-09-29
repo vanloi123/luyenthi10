@@ -1997,6 +1997,7 @@ function TeacherAssignmentConsole({ problems, students, assignments, submissions
   const [filterStudent, setFilterStudent] = useState("all");
   const [filterProblem, setFilterProblem] = useState("all");
   const [filterStatus, setFilterStatus] = useState("all");
+  const [reviewRow, setReviewRow] = useState(null);
 
   const assignedKeySet = useMemo(() => new Set(assignments.map((a) => `${a.problemId}::${a.studentId}`)), [assignments]);
 
@@ -2141,6 +2142,7 @@ function TeacherAssignmentConsole({ problems, students, assignments, submissions
                     <small>{row.problem.title}</small>
                   </div>
                   <span className={`nb-pill ${meta.cls}`}>{meta.label}</span>
+                  <button type="button" className="nb-icon-btn" title="Xem bài nộp" aria-label="Xem bài nộp" onClick={() => setReviewRow(row)}><Eye size={14} /></button>
                   <button type="button" className="nb-icon-btn nb-danger-icon" title="Hủy giao bài" aria-label="Hủy giao bài" onClick={() => removeAssignment(row.id)}><Trash2 size={14} /></button>
                 </div>
               );
@@ -2148,6 +2150,15 @@ function TeacherAssignmentConsole({ problems, students, assignments, submissions
           </div>
         )}
       </div>
+
+      {reviewRow && (
+        <SubmissionReviewModal
+          problem={reviewRow.problem}
+          submissions={submissions.filter((s) => s.problemId === reviewRow.problemId && s.studentId === reviewRow.studentId)}
+          students={[reviewRow.student]}
+          onClose={() => setReviewRow(null)}
+        />
+      )}
     </div>
   );
 }
