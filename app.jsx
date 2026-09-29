@@ -143,6 +143,16 @@ function mapSubmission(row) {
     createdAt: row.created_at || null,
   };
 }
+function mapAssignment(row) {
+  return {
+    id: row.id,
+    problemId: row.problem_id,
+    studentId: row.student_id,
+    assignedBy: row.assigned_by || "",
+    note: row.note || "",
+    createdAt: row.created_at || null,
+  };
+}
 
 async function fetchLessonProgress(studentId) {
   const { data, error } = await supabase.from("lesson_progress").select("*").eq("student_id", studentId);
@@ -184,7 +194,7 @@ async function fetchAllRows(table, { order, pageSize = 1000 } = {}) {
 }
 
 async function fetchAll() {
-  const [topicsR, problemsR, contestsR, submissionsR, discussionsR, repliesR, accountsR] = await Promise.all([
+  const [topicsR, problemsR, contestsR, submissionsR, discussionsR, repliesR, accountsR, assignmentsR] = await Promise.all([
     supabase.from("topics").select("*"),
     supabase.from("problems").select("*"),
     supabase.from("contests").select("*"),
@@ -192,8 +202,9 @@ async function fetchAll() {
     supabase.from("discussions").select("*").order("created_at", { ascending: false }),
     fetchAllRows("discussion_replies", { order: { column: "created_at", ascending: true } }),
     supabase.from("accounts").select("*"),
+    fetchAllRows("assignments", { order: { column: "created_at", ascending: true } }),
   ]);
-  const results = [topicsR, problemsR, contestsR, submissionsR, discussionsR, repliesR, accountsR];
+  const results = [topicsR, problemsR, contestsR, submissionsR, discussionsR, repliesR, accountsR, assignmentsR];
   const firstError = results.find((r) => r.error);
   if (firstError) throw firstError.error;
 
@@ -214,6 +225,7 @@ async function fetchAll() {
     submissions: (submissionsR.data || []).map(mapSubmission),
     discussions,
     accounts: (accountsR.data || []).map(mapAccount),
+    assignments: (assignmentsR.data || []).map(mapAssignment),
   };
 }
 
@@ -253,6 +265,19 @@ async function dbUpdateProblem(p) {
 }
 async function dbRemoveProblem(id) {
   const { error } = await supabase.from("problems").delete().eq("id", id);
+  if (error) throw error;
+}
+
+async function dbAddAssignments(rows) {
+  if (!rows.length) return;
+  const { error } = await supabase.from("assignments").upsert(
+    rows.map((a) => ({ id: a.id, problem_id: a.problemId, student_id: a.studentId, assigned_by: a.assignedBy || null, note: a.note || null })),
+    { onConflict: "problem_id,student_id", ignoreDuplicates: true }
+  );
+  if (error) throw error;
+}
+async function dbRemoveAssignment(id) {
+  const { error } = await supabase.from("assignments").delete().eq("id", id);
   if (error) throw error;
 }
 
@@ -1887,6 +1912,247 @@ function SubmissionReviewModal({ problem, submissions, students, onClose }) {
   );
 }
 
+function assignmentStatus(submissions, studentId, problemId) {
+  const subs = submissions.filter((s) => s.studentId === studentId && s.problemId === problemId);
+  if (subs.some((s) => s.verdict === "AC")) return "done";
+  if (subs.length > 0) return "attempted";
+  return "todo";
+}
+
+const ASSIGNMENT_STATUS_META = {
+  todo: { label: "Chưa làm", cls: "nb-pill-pending" },
+  attempted: { label: "Đã nộp, chưa đạt", cls: "nb-pill-wa" },
+  done: { label: "Đã hoàn thành", cls: "nb-pill-ac" },
+};
+
+function AssignedView({ isTeacher, currentUser, problems, students, assignments, submissions, addAssignments, removeAssignment, solvedByCurrent, onVerdict, topics }) {
+  const [active, setActive] = useState(null);
+  const problemById = useMemo(() => new Map(problems.map((p) => [p.id, p])), [problems]);
+  const studentById = useMemo(() => new Map(students.map((s) => [s.id, s])), [students]);
+  const topicById = useMemo(() => new Map(topics.map((t) => [t.id, t])), [topics]);
+
+  if (!isTeacher) {
+    const myAssignments = assignments
+      .filter((a) => a.studentId === currentUser.id)
+      .map((a) => ({ ...a, problem: problemById.get(a.problemId), status: assignmentStatus(submissions, currentUser.id, a.problemId) }))
+      .filter((a) => a.problem)
+      .sort((a, b) => (a.status === "done") - (b.status === "done") || new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+    const todoCount = myAssignments.filter((a) => a.status !== "done").length;
+    const mySubmissions = submissions.filter((s) => s.studentId === currentUser.id);
+
+    function problemStatsFor(problemId) {
+      const attempts = mySubmissions.filter((s) => s.problemId === problemId);
+      return { attempts: attempts.length, bestScore: attempts.reduce((best, s) => Math.max(best, Number(s.score ?? (s.verdict === "AC" ? s.problemPoints : 0))), 0) };
+    }
+
+    return (
+      <div>
+        <SectionHeading eyebrow="Nhiệm vụ cá nhân" title="Bài được giao" sub={myAssignments.length === 0 ? "Giáo viên chưa giao riêng bài nào cho em." : `Còn ${todoCount} bài chưa hoàn thành trên tổng số ${myAssignments.length} bài được giao.`} />
+        {myAssignments.length === 0 ? (
+          <div className="nb-practice-empty"><ListChecks size={20} /><strong>Chưa có bài được giao riêng</strong><span>Em vẫn có thể luyện tập tự do ở mục Luyện tập &amp; Python.</span></div>
+        ) : (
+          <div className="nb-assigned-list">
+            {myAssignments.map((a) => {
+              const meta = ASSIGNMENT_STATUS_META[a.status];
+              const language = LANGUAGE_META[problemLanguage(a.problem)] || LANGUAGE_META.cpp;
+              return (
+                <button type="button" key={a.id} className="nb-assigned-row" onClick={() => setActive(a.problem)}>
+                  <div className="nb-assigned-row-main">
+                    <strong>{a.problem.title}</strong>
+                    <small>{language.label} · {a.problem.points} điểm{a.assignedBy ? ` · Giao bởi ${a.assignedBy}` : ""}</small>
+                  </div>
+                  <span className={`nb-pill ${meta.cls}`}>{meta.label}</span>
+                  <ChevronRight size={16} />
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {active && (
+          <ProblemSolverModal
+            problem={active}
+            onClose={() => setActive(null)}
+            alreadySolved={solvedByCurrent(active.id)}
+            bestScore={problemStatsFor(active.id).bestScore}
+            attemptCount={problemStatsFor(active.id).attempts}
+            submissionHistory={mySubmissions}
+            onVerdict={(problemId, result, sourceCode) => onVerdict(problemId, result, sourceCode)}
+          />
+        )}
+      </div>
+    );
+  }
+
+  return <TeacherAssignmentConsole problems={problems} students={students} assignments={assignments} submissions={submissions} addAssignments={addAssignments} removeAssignment={removeAssignment} problemById={problemById} studentById={studentById} topicById={topicById} />;
+}
+
+function TeacherAssignmentConsole({ problems, students, assignments, submissions, addAssignments, removeAssignment, problemById, studentById, topicById }) {
+  const [mode, setMode] = useState("byProblem");
+  const [selectedProblem, setSelectedProblem] = useState("");
+  const [selectedStudent, setSelectedStudent] = useState("");
+  const [pickedStudents, setPickedStudents] = useState(() => new Set());
+  const [pickedProblems, setPickedProblems] = useState(() => new Set());
+  const [confirmMsg, setConfirmMsg] = useState("");
+  const [filterStudent, setFilterStudent] = useState("all");
+  const [filterProblem, setFilterProblem] = useState("all");
+  const [filterStatus, setFilterStatus] = useState("all");
+
+  const assignedKeySet = useMemo(() => new Set(assignments.map((a) => `${a.problemId}::${a.studentId}`)), [assignments]);
+
+  function toggleStudent(id) {
+    setPickedStudents((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  }
+  function toggleProblem(id) {
+    setPickedProblems((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  }
+
+  function submitByProblem() {
+    if (!selectedProblem || pickedStudents.size === 0) return;
+    addAssignments([...pickedStudents].map((studentId) => ({ problemId: selectedProblem, studentId })));
+    setConfirmMsg(`Đã giao bài cho ${pickedStudents.size} học sinh.`);
+    setPickedStudents(new Set());
+  }
+  function submitByStudent() {
+    if (!selectedStudent || pickedProblems.size === 0) return;
+    addAssignments([...pickedProblems].map((problemId) => ({ problemId, studentId: selectedStudent })));
+    setConfirmMsg(`Đã giao ${pickedProblems.size} bài tập.`);
+    setPickedProblems(new Set());
+  }
+
+  const rows = useMemo(() => {
+    return assignments
+      .map((a) => ({ ...a, problem: problemById.get(a.problemId), student: studentById.get(a.studentId), status: assignmentStatus(submissions, a.studentId, a.problemId) }))
+      .filter((a) => a.problem && a.student)
+      .filter((a) => filterStudent === "all" || a.studentId === filterStudent)
+      .filter((a) => filterProblem === "all" || a.problemId === filterProblem)
+      .filter((a) => filterStatus === "all" || a.status === filterStatus)
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  }, [assignments, problemById, studentById, submissions, filterStudent, filterProblem, filterStatus]);
+
+  const totalCount = assignments.length;
+  const doneCount = assignments.filter((a) => assignmentStatus(submissions, a.studentId, a.problemId) === "done").length;
+
+  return (
+    <div>
+      <SectionHeading eyebrow="Theo dõi nhận thức từng học sinh" title="Giao bài riêng" sub="Chọn bài tập để giao cho nhiều học sinh, hoặc chọn học sinh để giao nhiều bài tập cùng lúc." />
+
+      <div className="nb-assign-stats">
+        <div><strong>{totalCount}</strong><span>Lượt giao bài</span></div>
+        <div><strong>{doneCount}</strong><span>Đã hoàn thành</span></div>
+        <div><strong>{totalCount ? Math.round((doneCount / totalCount) * 100) : 0}%</strong><span>Tỉ lệ hoàn thành</span></div>
+      </div>
+
+      <div className="nb-assign-mode-toggle">
+        <button type="button" className={mode === "byProblem" ? "active" : ""} onClick={() => setMode("byProblem")}>Theo bài tập</button>
+        <button type="button" className={mode === "byStudent" ? "active" : ""} onClick={() => setMode("byStudent")}>Theo học sinh</button>
+      </div>
+
+      {mode === "byProblem" ? (
+        <div className="nb-panel nb-assign-panel">
+          <label className="nb-field-label">Chọn bài tập</label>
+          <select className="nb-input" value={selectedProblem} onChange={(e) => { setSelectedProblem(e.target.value); setPickedStudents(new Set()); setConfirmMsg(""); }}>
+            <option value="">— Chọn một bài tập —</option>
+            {problems.map((p) => <option key={p.id} value={p.id}>{p.title} ({topicById.get(p.topic)?.title || "Chưa phân chuyên đề"})</option>)}
+          </select>
+          {selectedProblem && (
+            <>
+              <label className="nb-field-label" style={{ marginTop: 12 }}>Chọn học sinh nhận bài</label>
+              <div className="nb-assign-checklist">
+                {students.map((s) => {
+                  const already = assignedKeySet.has(`${selectedProblem}::${s.id}`);
+                  return (
+                    <label key={s.id} className={`nb-assign-check ${pickedStudents.has(s.id) ? "selected" : ""} ${already ? "already" : ""}`}>
+                      <input type="checkbox" checked={pickedStudents.has(s.id)} disabled={already} onChange={() => toggleStudent(s.id)} />
+                      <Avatar name={s.name} size={26} />
+                      <span>{s.name}</span>
+                      {already && <small>Đã giao</small>}
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="nb-editor-actions">
+                <button className="nb-btn nb-btn-primary" type="button" disabled={pickedStudents.size === 0} onClick={submitByProblem}><Send size={14} /> Giao cho {pickedStudents.size || ""} học sinh</button>
+              </div>
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="nb-panel nb-assign-panel">
+          <label className="nb-field-label">Chọn học sinh</label>
+          <select className="nb-input" value={selectedStudent} onChange={(e) => { setSelectedStudent(e.target.value); setPickedProblems(new Set()); setConfirmMsg(""); }}>
+            <option value="">— Chọn một học sinh —</option>
+            {students.map((s) => <option key={s.id} value={s.id}>{s.name} (@{s.username})</option>)}
+          </select>
+          {selectedStudent && (
+            <>
+              <label className="nb-field-label" style={{ marginTop: 12 }}>Chọn bài tập giao</label>
+              <div className="nb-assign-checklist">
+                {problems.map((p) => {
+                  const already = assignedKeySet.has(`${p.id}::${selectedStudent}`);
+                  return (
+                    <label key={p.id} className={`nb-assign-check ${pickedProblems.has(p.id) ? "selected" : ""} ${already ? "already" : ""}`}>
+                      <input type="checkbox" checked={pickedProblems.has(p.id)} disabled={already} onChange={() => toggleProblem(p.id)} />
+                      <span><strong>{p.title}</strong><small>{topicById.get(p.topic)?.title || "Chưa phân chuyên đề"} · {p.points} điểm</small></span>
+                      {already && <small>Đã giao</small>}
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="nb-editor-actions">
+                <button className="nb-btn nb-btn-primary" type="button" disabled={pickedProblems.size === 0} onClick={submitByStudent}><Send size={14} /> Giao {pickedProblems.size || ""} bài tập</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+      {confirmMsg && <div className="nb-login-error" style={{ color: "var(--ac-green)", background: "rgba(46,158,109,0.1)", marginTop: 10 }}><CheckCircle2 size={14} /> {confirmMsg}</div>}
+
+      <div className="nb-assign-overview">
+        <div className="nb-editor-head" style={{ padding: 0, border: 0, marginTop: 26, marginBottom: 10 }}>
+          <h3 className="nb-h3">Tổng quan bài đã giao</h3>
+        </div>
+        <div className="nb-assign-filters">
+          <select className="nb-input" value={filterStudent} onChange={(e) => setFilterStudent(e.target.value)}>
+            <option value="all">Tất cả học sinh</option>
+            {students.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <select className="nb-input" value={filterProblem} onChange={(e) => setFilterProblem(e.target.value)}>
+            <option value="all">Tất cả bài tập</option>
+            {problems.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
+          </select>
+          <div className="nb-filter-row" style={{ margin: 0 }}>
+            {[["all", "Tất cả"], ["todo", "Chưa làm"], ["attempted", "Chưa đạt"], ["done", "Hoàn thành"]].map(([key, label]) => (
+              <button key={key} className={`nb-chip ${filterStatus === key ? "active" : ""}`} onClick={() => setFilterStatus(key)}>{label}</button>
+            ))}
+          </div>
+        </div>
+        {rows.length === 0 ? (
+          <p className="nb-sub" style={{ padding: 14 }}>Chưa có bài nào được giao phù hợp bộ lọc.</p>
+        ) : (
+          <div className="nb-assign-rows">
+            {rows.map((row) => {
+              const meta = ASSIGNMENT_STATUS_META[row.status];
+              return (
+                <div className="nb-assign-row" key={row.id}>
+                  <Avatar name={row.student.name} size={28} />
+                  <div className="nb-assign-row-info">
+                    <strong>{row.student.name}</strong>
+                    <small>{row.problem.title}</small>
+                  </div>
+                  <span className={`nb-pill ${meta.cls}`}>{meta.label}</span>
+                  <button type="button" className="nb-icon-btn nb-danger-icon" title="Hủy giao bài" aria-label="Hủy giao bài" onClick={() => removeAssignment(row.id)}><Trash2 size={14} /></button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 function ContestRunner({ contest, onExit, isTeacher, solvedByCurrent, onVerdict, problems }) {
   const [remaining, setRemaining] = useState(0);
   const [ready, setReady] = useState(isTeacher);
@@ -2334,6 +2600,7 @@ const BASE_NAV = [
   { key: "overview", label: "Tổng quan", shortLabel: "Tổng quan", icon: Home },
   { key: "lessons", label: "Bài giảng", shortLabel: "Bài giảng", icon: BookOpen },
   { key: "problems", label: "Luyện tập & Python", shortLabel: "Luyện tập", icon: Code2 },
+  { key: "assignments", label: "Bài được giao", shortLabel: "Được giao", icon: ListChecks },
   { key: "contests", label: "Đề thi thử", shortLabel: "Đề thi", icon: Clock },
   { key: "leaderboard", label: "Bảng xếp hạng", shortLabel: "Xếp hạng", icon: Trophy },
   { key: "discussion", label: "Thảo luận", shortLabel: "Thảo luận", icon: MessageSquare },
@@ -2348,6 +2615,7 @@ function App() {
   const [discussions, setDiscussions] = useState([]);
   const [submissions, setSubmissions] = useState([]);
   const [accounts, setAccounts] = useState([]);
+  const [assignments, setAssignments] = useState([]);
   const [lessonProgress, setLessonProgress] = useState({});
   const [authUserId, setAuthUserId] = useState(null);
   const [loginError, setLoginError] = useState("");
@@ -2385,6 +2653,7 @@ function App() {
       setSubmissions(data.submissions);
       setDiscussions(data.discussions);
       setAccounts(data.accounts);
+      setAssignments(data.assignments);
       const sessionUserId = lsGet("session-user");
       if (sessionUserId && data.accounts.some((a) => a.id === sessionUserId)) setAuthUserId(sessionUserId);
     } catch (e) {
@@ -2417,6 +2686,7 @@ function App() {
         setSubmissions(data.submissions);
         setDiscussions(data.discussions);
         setAccounts(data.accounts);
+        setAssignments(data.assignments);
         setStorageError(false);
       } catch (e) { /* transient network hiccup, ignore silently */ }
     }, 20000);
@@ -2433,6 +2703,7 @@ function App() {
       setSubmissions(data.submissions);
       setDiscussions(data.discussions);
       setAccounts(data.accounts);
+      setAssignments(data.assignments);
       const retryResult = await retryPendingProblemWrites();
       if (retryResult.failed === 0) setStorageError(false);
     } catch (e) {
@@ -2607,6 +2878,24 @@ function App() {
     setDiscussions((prev) => prev.map((d) => (d.id === threadId ? { ...d, replies: [...d.replies, reply] } : d)));
     dbAddReply(threadId, reply).catch(() => setStorageError(true));
   }
+  function addAssignments(pairs) {
+    if (!isTeacher || pairs.length === 0) return;
+    const existingKeys = new Set(assignments.map((a) => `${a.problemId}::${a.studentId}`));
+    const newRows = pairs
+      .filter(({ problemId, studentId }) => !existingKeys.has(`${problemId}::${studentId}`))
+      .map(({ problemId, studentId }) => ({
+        id: "asg" + Date.now() + Math.random().toString(36).slice(2, 7),
+        problemId, studentId, assignedBy: currentUser?.name || "", note: "", createdAt: new Date().toISOString(),
+      }));
+    if (newRows.length === 0) return;
+    setAssignments((prev) => [...prev, ...newRows]);
+    dbAddAssignments(newRows).catch(() => setStorageError(true));
+  }
+  function removeAssignment(id) {
+    if (!isTeacher) return;
+    setAssignments((prev) => prev.filter((a) => a.id !== id));
+    dbRemoveAssignment(id).catch(() => setStorageError(true));
+  }
   function resetPassword(id, newPassword) {
     if (!isTeacher) return;
     const target = accounts.find((account) => account.id === id);
@@ -2641,7 +2930,9 @@ function App() {
     dbUpdatePassword(currentUser.id, hash).catch(() => setStorageError(true));
   }
 
-  const navItems = isTeacher ? [...BASE_NAV, ACCOUNTS_NAV] : BASE_NAV;
+  const navItems = (isTeacher ? [...BASE_NAV, ACCOUNTS_NAV] : BASE_NAV).map((item) =>
+    item.key === "assignments" && isTeacher ? { ...item, label: "Giao bài", shortLabel: "Giao bài" } : item
+  );
   const activeTabLabel = navItems.find((n) => n.key === tab)?.label;
 
   return (
@@ -2882,6 +3173,40 @@ function App() {
         .nb-exam-check small { color: var(--slate); font-size: 10px; }
         .nb-exam-check > svg { color: var(--pen-blue); opacity: 0; }
         .nb-exam-check.selected > svg { opacity: 1; }
+        .nb-assigned-list { display: flex; flex-direction: column; gap: 8px; }
+        .nb-assigned-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 13px 15px; border: 1px solid var(--paper-line); border-radius: 10px; background: #fff; cursor: pointer; text-align: left; font-family: inherit; transition: border-color .12s, background .12s; }
+        .nb-assigned-row:hover { border-color: var(--pen-blue); background: rgba(4,166,199,0.04); }
+        .nb-assigned-row-main { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+        .nb-assigned-row-main strong { font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .nb-assigned-row-main small { color: var(--slate); font-size: 11px; }
+        .nb-assign-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 18px; }
+        .nb-assign-stats > div { display: flex; flex-direction: column; gap: 3px; padding: 14px; border: 1px solid var(--paper-line); border-radius: 10px; background: #fff; }
+        .nb-assign-stats strong { font: 700 22px 'JetBrains Mono', monospace; color: var(--pen-blue); }
+        .nb-assign-stats span { color: var(--slate); font-size: 11px; }
+        .nb-assign-mode-toggle { display: inline-flex; gap: 4px; padding: 4px; border-radius: 10px; background: var(--paper-line); margin-bottom: 14px; }
+        .nb-assign-mode-toggle button { padding: 8px 16px; border: 0; border-radius: 7px; background: transparent; color: var(--slate); font: 600 12.5px inherit; cursor: pointer; }
+        .nb-assign-mode-toggle button.active { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(16,42,67,0.12); }
+        .nb-assign-panel { display: flex; flex-direction: column; gap: 4px; }
+        .nb-assign-checklist { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; max-height: 260px; overflow-y: auto; padding: 3px; margin-top: 8px; }
+        .nb-assign-check { display: flex; align-items: center; gap: 9px; padding: 10px; border: 1px solid var(--paper-line); border-radius: 8px; background: #FBFEFE; cursor: pointer; }
+        .nb-assign-check.selected { border-color: var(--pen-blue); background: rgba(4,166,199,0.06); }
+        .nb-assign-check.already { opacity: 0.55; cursor: not-allowed; }
+        .nb-assign-check input { accent-color: var(--pen-blue); }
+        .nb-assign-check > span { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+        .nb-assign-check strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+        .nb-assign-check small { color: var(--slate); font-size: 10px; margin-left: auto; }
+        .nb-assign-overview { margin-top: 8px; }
+        .nb-assign-filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+        .nb-assign-filters select { width: auto; min-width: 180px; }
+        .nb-assign-rows { display: flex; flex-direction: column; gap: 7px; }
+        .nb-assign-row { display: flex; align-items: center; gap: 11px; padding: 10px 13px; border: 1px solid var(--paper-line); border-radius: 9px; background: #fff; }
+        .nb-assign-row-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+        .nb-assign-row-info strong { font-size: 12.5px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .nb-assign-row-info small { color: var(--slate); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        @media (max-width: 640px) {
+          .nb-assign-checklist { grid-template-columns: 1fr; }
+          .nb-assign-stats { grid-template-columns: 1fr; }
+        }
         .nb-exam-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
         .nb-exam-search { display: flex; align-items: center; gap: 8px; flex: 1 1 240px; height: 40px; padding: 0 11px; background: #fff; border: 1px solid var(--paper-line); border-radius: 8px; color: var(--slate); }
         .nb-exam-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font: 13px inherit; }
@@ -4122,6 +4447,14 @@ function App() {
                   isTeacher={isTeacher} currentUser={currentUser} problems={problems} submissions={submissions}
                   points={points} addProblem={addProblem} updateProblem={updateProblem} removeProblem={removeProblem} topics={topics}
                   solvedByCurrent={solvedByCurrent} onVerdict={registerVerdict} students={students}
+                />
+              )}
+              {tab === "assignments" && (
+                <AssignedView
+                  isTeacher={isTeacher} currentUser={currentUser} problems={problems} students={students}
+                  assignments={assignments} submissions={submissions} addAssignments={addAssignments}
+                  removeAssignment={removeAssignment} solvedByCurrent={solvedByCurrent} onVerdict={registerVerdict}
+                  topics={topics}
                 />
               )}
               {tab === "contests" && (
