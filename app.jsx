@@ -3788,32 +3788,125 @@ function typingTitle(wpm) {
   return "Tập sự gõ phím";
 }
 
+const PY_KEYWORDS = new Set("def return for in while if elif else import from as with try except class lambda not and or break continue pass True False None is".split(" "));
+const PY_BUILTINS = new Set("print input int float str len range map list set dict sum min max abs round sorted open type zip enumerate any all chr ord divmod tuple bool pow reversed".split(" "));
+function pyTokenClasses(code) {
+  const cls = new Array(code.length).fill("p");
+  const re = /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][A-Za-z_0-9]*)/g;
+  let m;
+  while ((m = re.exec(code))) {
+    let c = "p";
+    const end = m.index + m[0].length;
+    if (m[1]) c = "s";
+    else if (m[2]) c = "n";
+    else if (m[3] === "f" && /["']/.test(code[end] || "")) c = "s";
+    else if (PY_KEYWORDS.has(m[3])) c = "k";
+    else if (PY_BUILTINS.has(m[3])) c = "b";
+    else if (code[end] === "(") c = "f";
+    for (let i = m.index; i < end; i += 1) cls[i] = c;
+  }
+  return cls;
+}
+function ColoredCode({ code }) {
+  const cls = useMemo(() => pyTokenClasses(code), [code]);
+  return <code className="nb-tg-colored">{[...code].map((ch, i) => <span key={i} className={`t-${cls[i]}`}>{ch}</span>)}</code>;
+}
+
+/* Bàn phím ảo: chỉ ra phím kế tiếp và ngón tay nên dùng */
+const TG_FINGERS = [
+  { fingers: [0, 0, 1, 2, 3, 3, 3, 3, 2, 1, 0, 0, 0], left: 5, keys: [["`", "~"], ["1", "!"], ["2", "@"], ["3", "#"], ["4", "$"], ["5", "%"], ["6", "^"], ["7", "&"], ["8", "*"], ["9", "("], ["0", ")"], ["-", "_"], ["=", "+"]] },
+  { fingers: [0, 1, 2, 3, 3, 3, 3, 2, 1, 0, 0, 0, 0], left: 4, keys: "qwertyuiop".split("").map((c) => [c, c.toUpperCase()]).concat([["[", "{"], ["]", "}"], ["\\", "|"]]) },
+  { fingers: [0, 1, 2, 3, 3, 3, 3, 2, 1, 0, 0], left: 4, keys: "asdfghjkl".split("").map((c) => [c, c.toUpperCase()]).concat([[";", ":"], ["'", "\""]]) },
+  { fingers: [0, 1, 2, 3, 3, 3, 3, 2, 1, 0], left: 4, keys: "zxcvbnm".split("").map((c) => [c, c.toUpperCase()]).concat([[",", "<"], [".", ">"], ["/", "?"]]) },
+];
+const TG_ROWS = TG_FINGERS.map((row, r) => row.keys.map(([base, shift], c) => ({
+  id: `${r}-${c}`, base, shift, finger: row.fingers[c], hand: c <= row.left ? "L" : "R", letter: /[a-z]/.test(base),
+})));
+const TG_KEY_BY_CHAR = (() => {
+  const map = { " ": { id: "space", shift: null } };
+  TG_ROWS.flat().forEach((k) => {
+    map[k.base] = { id: k.id, shift: null };
+    if (k.shift !== k.base) map[k.shift] = { id: k.id, shift: k.hand === "L" ? "R" : "L" };
+  });
+  return map;
+})();
+
+function TypingKeyboard({ nextChar, press }) {
+  const target = nextChar ? TG_KEY_BY_CHAR[nextChar] : null;
+  return (
+    <div className="nb-tg-kb" aria-hidden="true">
+      {TG_ROWS.map((row, r) => (
+        <div className="nb-tg-kb-row" key={r} style={{ paddingLeft: r === 1 ? 14 : r === 2 ? 26 : r === 3 ? 0 : 0 }}>
+          {r === 3 && <div className={`nb-tg-key wide shift ${target?.shift === "L" ? "target" : ""}`}>Shift</div>}
+          {row.map((k) => (
+            <div key={k.id} className={`nb-tg-key f${k.finger} ${target?.id === k.id ? "target" : ""} ${press?.id === k.id ? (press.bad ? "bad" : "down") : ""}`}>
+              {!k.letter && k.shift !== k.base && <small>{k.shift}</small>}
+              <span>{k.letter ? k.shift : k.base}</span>
+            </div>
+          ))}
+          {r === 3 && <div className={`nb-tg-key wide shift ${target?.shift === "R" ? "target" : ""}`}>Shift</div>}
+        </div>
+      ))}
+      <div className="nb-tg-kb-row"><div className={`nb-tg-key space ${target?.id === "space" ? "target" : ""} ${press?.id === "space" ? (press.bad ? "bad" : "down") : ""}`}>Dấu cách</div></div>
+      <div className="nb-tg-kb-legend"><span><i className="f0" />Út</span><span><i className="f1" />Áp út</span><span><i className="f2" />Giữa</span><span><i className="f3" />Trỏ</span><span><i className="f4" />Cái</span></div>
+    </div>
+  );
+}
+
+/* Ví dụ tự gõ ở màn hình chọn chủ đề */
+function TypingDemo({ snippets }) {
+  const reduced = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const [i, setI] = useState(0);
+  const [n, setN] = useState(0);
+  const snippet = snippets[i % Math.max(1, snippets.length)] || TYPING_SNIPPETS[0];
+  useEffect(() => { setI(0); setN(0); }, [snippets]);
+  useEffect(() => {
+    if (reduced) return undefined;
+    const done = n >= snippet.code.length;
+    const timer = setTimeout(() => { if (done) { setI((v) => v + 1); setN(0); } else setN((v) => v + 1); }, done ? 1500 : 75 + Math.random() * 60);
+    return () => clearTimeout(timer);
+  }, [n, snippet, reduced]);
+  const cls = useMemo(() => pyTokenClasses(snippet.code), [snippet.code]);
+  const shown = reduced ? snippet.code.length : n;
+  return (
+    <div className="nb-tg-editor demo">
+      <div className="nb-tg-tab"><Code2 size={13} /> vi_du.py</div>
+      <div className="nb-tg-line"><span className="nb-tg-gutter">1</span>
+        <code>{[...snippet.code].map((ch, k) => <span key={k} className={k < shown ? `t-${cls[k]}` : "t-dim"}>{ch}</span>)}{!reduced && <i className="nb-tg-caret" />}</code>
+      </div>
+      <div className="nb-tg-demo-hint">{snippet.hint}</div>
+    </div>
+  );
+}
+
 function TypingGameView({ currentUser }) {
   const [phase, setPhase] = useState("menu");
   const [category, setCategory] = useState("all");
   const [mode, setMode] = useState("timed");
   const [typed, setTyped] = useState("");
   const [result, setResult] = useState(null);
+  const [press, setPress] = useState(null);
+  const [gain, setGain] = useState(null);
   const [, bump] = useReducer((x) => x + 1, 0);
   const inputRef = useRef(null);
+  const pressTimer = useRef(null);
   const game = useRef(null);
   const bestKey = (m) => `typing-best:${currentUser.id}:${m}`;
   const [bests, setBests] = useState(() => ({ timed: lsGet(bestKey("timed")), free: lsGet(bestKey("free")) }));
 
   const pool = useMemo(() => TYPING_SNIPPETS.filter((s) => category === "all" || s.cat === category), [category]);
+  const demoPool = useMemo(() => shuffleList(pool).slice(0, 6), [pool]);
+  useEffect(() => () => clearTimeout(pressTimer.current), []);
 
   function newGame() {
     const need = mode === "timed" ? 300 : TYPING_MODES.free.count;
     let queue = [];
     while (queue.length < need) queue = queue.concat(shuffleList(pool));
     queue = queue.slice(0, need);
-    game.current = { queue, idx: 0, score: 0, done: 0, chars: 0, keys: 0, errors: 0, combo: 0, bestCombo: 0, missed: [], hadError: false, startedAt: Date.now(), flash: "" };
-    setTyped("");
-    setResult(null);
-    setPhase("play");
+    game.current = { queue, idx: 0, score: 0, done: 0, chars: 0, keys: 0, errors: 0, combo: 0, bestCombo: 0, missed: [], startedAt: Date.now(), flash: "" };
+    setTyped(""); setResult(null); setGain(null); setPhase("play");
     setTimeout(() => inputRef.current?.focus(), 30);
   }
-
   function finish() {
     const g = game.current;
     if (!g || g.finished) return;
@@ -3825,11 +3918,10 @@ function TypingGameView({ currentUser }) {
     const summary = { score: g.score, wpm, accuracy, done: g.done, bestCombo: g.bestCombo, seconds: Math.round(elapsed / 1000), missed: g.missed, mode, date: new Date().toISOString() };
     const previous = lsGet(bestKey(mode));
     const isRecord = g.score > 0 && (!previous || g.score > previous.score);
-    if (isRecord) { lsSet(bestKey(mode), { score: g.score, wpm, accuracy, date: summary.date }); setBests((b) => ({ ...b, [mode]: { score: g.score, wpm, accuracy, date: summary.date } })); }
+    if (isRecord) { const rec = { score: g.score, wpm, accuracy, date: summary.date }; lsSet(bestKey(mode), rec); setBests((b) => ({ ...b, [mode]: rec })); }
     setResult({ ...summary, isRecord, previous });
     setPhase("result");
   }
-
   useEffect(() => {
     if (phase !== "play") return undefined;
     const timer = setInterval(() => {
@@ -3844,9 +3936,19 @@ function TypingGameView({ currentUser }) {
   function nextSnippet() {
     const g = game.current;
     g.idx += 1;
-    g.hadError = false;
     setTyped("");
     if (mode === "free" && g.idx >= TYPING_MODES.free.count) finish();
+  }
+  function onKeyDown(event) {
+    if (event.key === "Escape") { quit(); return; }
+    if (event.key.length !== 1) return;
+    const info = TG_KEY_BY_CHAR[event.key];
+    const g = game.current;
+    if (!info || !g) return;
+    const expected = g.queue[g.idx]?.code[typed.length];
+    setPress({ id: info.id, bad: expected !== event.key });
+    clearTimeout(pressTimer.current);
+    pressTimer.current = setTimeout(() => setPress(null), 150);
   }
   function onChange(event) {
     const g = game.current;
@@ -3857,18 +3959,15 @@ function TypingGameView({ currentUser }) {
     for (let i = typed.length; i < value.length; i += 1) {
       g.keys += 1;
       if (value[i] !== snippet.code[i]) {
-        g.errors += 1; g.combo = 0; g.hadError = true; g.flash = "bad";
+        g.errors += 1; g.combo = 0; g.flash = "bad";
         if (!g.missed.some((m) => m.code === snippet.code)) g.missed.push(snippet);
       }
     }
     if (value === snippet.code) {
-      const multiplier = 1 + Math.min(g.combo, 10) * 0.1;
-      g.score += Math.round(snippet.code.length * 10 * multiplier);
-      g.chars += snippet.code.length;
-      g.done += 1;
-      g.combo += 1;
-      g.bestCombo = Math.max(g.bestCombo, g.combo);
-      g.flash = "ok";
+      const points = Math.round(snippet.code.length * 10 * (1 + Math.min(g.combo, 10) * 0.1));
+      g.score += points; g.chars += snippet.code.length; g.done += 1; g.combo += 1;
+      g.bestCombo = Math.max(g.bestCombo, g.combo); g.flash = "ok";
+      setGain({ n: points, id: Date.now() });
       nextSnippet();
     } else {
       setTyped(value);
@@ -3881,126 +3980,156 @@ function TypingGameView({ currentUser }) {
     const snippet = g.queue[g.idx];
     g.combo = 0;
     if (!g.missed.some((m) => m.code === snippet.code)) g.missed.push(snippet);
-    nextSnippet();
-    bump();
-    inputRef.current?.focus();
+    nextSnippet(); bump(); inputRef.current?.focus();
   }
   function quit() { if (game.current) game.current.finished = true; setPhase("menu"); }
 
+  /* ---------------- Màn hình chọn ---------------- */
   if (phase === "menu") {
     return (
       <div className="nb-tg">
-        <div className="nb-tg-hero">
-          <div><div className="nb-eyebrow">Giải trí · Luyện phản xạ</div><h2>Gõ lệnh Python</h2>
-            <p>Gõ đúng và nhanh các hàm, câu lệnh quen thuộc của Python. Vừa chơi vừa nhớ cú pháp để làm bài thi không bị sai chính tả.</p></div>
-          <div className="nb-tg-hero-icon"><Keyboard size={30} /></div>
-        </div>
-        <section className="nb-tg-panel">
-          <h3>1. Chọn chủ đề</h3>
-          <div className="nb-filter-row" style={{ margin: 0 }}>
-            {TYPING_CATEGORIES.map((c) => (
-              <button key={c.key} className={`nb-chip ${category === c.key ? "active" : ""}`} onClick={() => setCategory(c.key)}>
-                {c.label} · {TYPING_SNIPPETS.filter((s) => c.key === "all" || s.cat === c.key).length}
-              </button>
-            ))}
+        <header className="nb-tg-head">
+          <h2>Gõ lệnh Python</h2>
+          <p>Gõ nhanh và đúng các hàm, câu lệnh hay gặp để nhớ cú pháp, bớt sai chính tả khi làm bài.</p>
+        </header>
+        <div className="nb-tg-menu">
+          <div className="nb-tg-choose">
+            <section className="nb-tg-block">
+              <h3>Chủ đề</h3>
+              <div className="nb-tg-topics" role="radiogroup" aria-label="Chủ đề">
+                {TYPING_CATEGORIES.map((c) => {
+                  const list = TYPING_SNIPPETS.filter((s) => c.key === "all" || s.cat === c.key);
+                  return (
+                    <button key={c.key} role="radio" aria-checked={category === c.key} className={`nb-tg-topic ${category === c.key ? "active" : ""}`} onClick={() => setCategory(c.key)}>
+                      <strong>{c.label}</strong>
+                      <code>{c.key === "all" ? "print(), for, def, ..." : list[0].code}</code>
+                      <span>{list.length} lệnh</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+            <section className="nb-tg-block">
+              <h3>Chế độ</h3>
+              <div className="nb-tg-modes" role="radiogroup" aria-label="Chế độ">
+                {Object.entries(TYPING_MODES).map(([key, m]) => (
+                  <button key={key} role="radio" aria-checked={mode === key} className={`nb-tg-mode ${mode === key ? "active" : ""}`} onClick={() => setMode(key)}>
+                    <span className="nb-tg-mode-icon">{key === "timed" ? <Clock size={18} /> : <ListChecks size={18} />}</span>
+                    <span className="nb-tg-mode-text"><strong>{m.label}</strong><span>{m.desc}</span></span>
+                    <small>{bests[key] ? `Kỷ lục ${bests[key].score}` : "Chưa chơi"}</small>
+                  </button>
+                ))}
+              </div>
+            </section>
           </div>
-        </section>
-        <section className="nb-tg-panel">
-          <h3>2. Chọn chế độ</h3>
-          <div className="nb-tg-modes">
-            {Object.entries(TYPING_MODES).map(([key, m]) => (
-              <button key={key} className={`nb-tg-mode ${mode === key ? "active" : ""}`} onClick={() => setMode(key)}>
-                {key === "timed" ? <Clock size={20} /> : <ListChecks size={20} />}
-                <strong>{m.label}</strong><span>{m.desc}</span>
-                <small>{bests[key] ? `Kỷ lục của em: ${bests[key].score} điểm · ${bests[key].wpm} WPM` : "Chưa có kỷ lục"}</small>
-              </button>
-            ))}
-          </div>
-        </section>
-        <div className="nb-tg-start">
-          <button className="nb-btn nb-btn-primary" onClick={newGame}><Play size={16} /> Bắt đầu chơi</button>
-          <span className="nb-sub">Gõ đúng liên tiếp để tăng combo (tối đa x2 điểm). Sai một ký tự là mất combo.</span>
+          <aside className="nb-tg-side">
+            <TypingDemo snippets={demoPool} />
+            <button className="nb-btn nb-btn-primary nb-tg-start-btn" onClick={newGame}><Play size={17} /> Bắt đầu chơi</button>
+            <p className="nb-sub">Gõ đúng liên tiếp để tăng combo, điểm nhân tối đa gấp đôi. Sai một ký tự là mất combo.</p>
+          </aside>
         </div>
       </div>
     );
   }
 
+  /* ---------------- Kết quả ---------------- */
   if (phase === "result" && result) {
     return (
       <div className="nb-tg">
-        <div className="nb-tg-result-hero">
-          <div className="nb-eyebrow">{TYPING_MODES[result.mode].label}</div>
-          <h2>{typingTitle(result.wpm)}</h2>
-          {result.isRecord && <span className="nb-tg-record"><Award size={14} /> Kỷ lục mới!</span>}
-        </div>
-        <div className="nb-tg-stats big">
-          <div><strong>{result.score}</strong><span>Điểm</span></div>
-          <div><strong>{result.wpm}</strong><span>WPM (từ/phút)</span></div>
-          <div><strong>{result.accuracy}%</strong><span>Chính xác</span></div>
-          <div><strong>{result.done}</strong><span>Lệnh hoàn thành</span></div>
-          <div><strong>x{result.bestCombo}</strong><span>Combo cao nhất</span></div>
-          <div><strong>{result.seconds}s</strong><span>Thời gian</span></div>
-        </div>
-        {result.previous && !result.isRecord && <p className="nb-sub">Kỷ lục hiện tại của em: {result.previous.score} điểm · {result.previous.wpm} WPM.</p>}
-        <div className="nb-tg-start">
-          <button className="nb-btn nb-btn-primary" onClick={newGame}><RefreshCw size={16} /> Chơi lại</button>
-          <button className="nb-btn nb-btn-ghost" onClick={() => setPhase("menu")}>Đổi chủ đề / chế độ</button>
-        </div>
-        {result.missed.length > 0 && (
-          <section className="nb-tg-panel">
-            <h3>Các lệnh cần luyện thêm ({result.missed.length})</h3>
-            <div className="nb-tg-missed">
-              {result.missed.map((m) => (<div key={m.code}><code>{m.code}</code><span>{m.hint}</span></div>))}
+        <div className="nb-tg-result">
+          <section className="nb-tg-result-main">
+            <span className="nb-tg-result-mode">{TYPING_MODES[result.mode].label}</span>
+            <h2>{typingTitle(result.wpm)}</h2>
+            <div className="nb-tg-wpm"><strong>{result.wpm}</strong><span>từ mỗi phút</span></div>
+            {result.isRecord && <span className="nb-tg-record"><Award size={15} /> Kỷ lục mới của em</span>}
+            {result.previous && !result.isRecord && <p className="nb-sub">Kỷ lục hiện tại: {result.previous.score} điểm, {result.previous.wpm} từ/phút.</p>}
+            <div className="nb-tg-actions">
+              <button className="nb-btn nb-btn-primary" onClick={newGame}><RefreshCw size={16} /> Chơi lại</button>
+              <button className="nb-btn nb-btn-ghost" onClick={() => setPhase("menu")}>Đổi chủ đề</button>
             </div>
           </section>
-        )}
+          <dl className="nb-tg-result-stats">
+            <div><dt>Điểm</dt><dd>{result.score}</dd></div>
+            <div><dt>Chính xác</dt><dd>{result.accuracy}%</dd></div>
+            <div><dt>Lệnh hoàn thành</dt><dd>{result.done}</dd></div>
+            <div><dt>Combo cao nhất</dt><dd>x{result.bestCombo}</dd></div>
+            <div><dt>Thời gian</dt><dd>{result.seconds} giây</dd></div>
+          </dl>
+        </div>
+        {result.missed.length > 0 ? (
+          <section className="nb-tg-block">
+            <h3>Nên luyện thêm ({result.missed.length} lệnh)</h3>
+            <div className="nb-tg-missed">
+              {result.missed.map((m) => (<div key={m.code}><ColoredCode code={m.code} /><span>{m.hint}</span></div>))}
+            </div>
+          </section>
+        ) : <p className="nb-sub">Em không gõ sai lệnh nào. Rất chuẩn!</p>}
       </div>
     );
   }
 
+  /* ---------------- Đang chơi ---------------- */
   const g = game.current;
   if (!g) return null;
   const snippet = g.queue[g.idx] || g.queue[0];
   const elapsed = Date.now() - g.startedAt;
-  const left = Math.max(0, TYPING_MODES.timed.seconds - elapsed / 1000);
+  const total = TYPING_MODES.timed.seconds;
+  const left = Math.max(0, total - elapsed / 1000);
   const liveWpm = elapsed > 3000 ? Math.round(g.chars / 5 / (elapsed / 60000)) : 0;
   const liveAcc = g.keys ? Math.round(((g.keys - g.errors) / g.keys) * 100) : 100;
   const multiplier = (1 + Math.min(g.combo, 10) * 0.1).toFixed(1);
   const categoryLabel = TYPING_CATEGORIES.find((c) => c.key === snippet.cat)?.label || "";
+  const cls = pyTokenClasses(snippet.code);
+  const RING = 2 * Math.PI * 18;
 
   return (
-    <div className="nb-tg">
+    <div className="nb-tg play">
       <div className="nb-tg-bar">
         <button className="nb-btn nb-btn-ghost" onClick={quit}><ChevronLeft size={16} /> Thoát</button>
-        {mode === "timed"
-          ? <div className={`nb-tg-time ${left < 10 ? "warn" : ""}`}><Clock size={15} /> {Math.ceil(left)}s</div>
-          : <div className="nb-tg-time"><ListChecks size={15} /> {Math.min(g.idx + 1, TYPING_MODES.free.count)}/{TYPING_MODES.free.count}</div>}
+        {mode === "timed" ? (
+          <div className={`nb-tg-ring ${left < 10 ? "warn" : ""}`} role="timer" aria-label={`Còn ${Math.ceil(left)} giây`}>
+            <svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="18" className="bg" /><circle cx="22" cy="22" r="18" className="fg" strokeDasharray={RING} strokeDashoffset={RING * (1 - left / total)} /></svg>
+            <b>{Math.ceil(left)}</b>
+          </div>
+        ) : (
+          <div className="nb-tg-progress"><span>Lệnh {Math.min(g.idx + 1, TYPING_MODES.free.count)}/{TYPING_MODES.free.count}</span><i><b style={{ width: `${(g.idx / TYPING_MODES.free.count) * 100}%` }} /></i></div>
+        )}
         <button className="nb-btn nb-btn-ghost" onClick={skip}>Bỏ qua <ChevronRight size={16} /></button>
       </div>
-      {mode === "timed" && <div className="nb-tg-track"><span style={{ width: `${(left / TYPING_MODES.timed.seconds) * 100}%` }} /></div>}
-      <div className="nb-tg-stats">
-        <div><strong>{g.score}</strong><span>Điểm</span></div>
-        <div className={g.combo >= 3 ? "hot" : ""}><strong>x{multiplier}</strong><span>Combo {g.combo}</span></div>
-        <div><strong>{liveWpm}</strong><span>WPM</span></div>
-        <div><strong>{liveAcc}%</strong><span>Chính xác</span></div>
-      </div>
-      <div className={`nb-tg-card ${g.flash}`} onClick={() => inputRef.current?.focus()} onAnimationEnd={() => { g.flash = ""; }}>
-        <div className="nb-tg-meta"><span className="nb-pill nb-pill-pending">{categoryLabel}</span><span className="nb-sub">{snippet.hint}</span></div>
-        <div className="nb-tg-code" aria-label={snippet.code}>
-          {[...snippet.code].map((ch, i) => {
-            const t = typed[i];
-            const cls = t === undefined ? (i === typed.length ? "cur" : "") : t === ch ? "ok" : "bad";
-            return <span key={i} className={`nb-tg-ch ${cls}`}>{ch}</span>;
-          })}
+
+      <div className="nb-tg-strip">
+        <div className="nb-tg-score"><span>Điểm</span><strong>{g.score}</strong>{gain && <em key={gain.id} className="nb-tg-gain">+{gain.n}</em>}</div>
+        <div className={`nb-tg-combo ${g.combo >= 3 ? "hot" : ""}`}>
+          <span>Combo {g.combo} · x{multiplier}</span>
+          <div className="nb-tg-pips">{Array.from({ length: 10 }, (_, i) => <i key={i} className={i < Math.min(g.combo, 10) ? "on" : ""} />)}</div>
         </div>
-        <input
-          ref={inputRef} className="nb-tg-input nb-mono" value={typed} onChange={onChange}
-          onPaste={(e) => e.preventDefault()} onKeyDown={(e) => { if (e.key === "Escape") quit(); }}
-          placeholder="Gõ lệnh ở đây…" autoFocus autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
-          aria-label="Ô gõ lệnh"
-        />
+        <div className="nb-tg-mini"><span>Tốc độ</span><strong>{liveWpm}</strong></div>
+        <div className="nb-tg-mini"><span>Chính xác</span><strong>{liveAcc}%</strong></div>
       </div>
-      <p className="nb-sub" style={{ textAlign: "center" }}>Gõ chính xác từng ký tự, kể cả dấu cách. Tự chuyển sang lệnh tiếp theo khi gõ đúng. Nhấn Esc để thoát.</p>
+
+      <div className={`nb-tg-editor ${g.flash}`} onAnimationEnd={() => { g.flash = ""; }} onClick={() => inputRef.current?.focus()}>
+        <div className="nb-tg-tab"><Code2 size={13} /> lenh.py <span>{categoryLabel}</span></div>
+        <div className="nb-tg-line" aria-label={snippet.code}>
+          <span className="nb-tg-gutter">1</span>
+          <code>
+            {[...snippet.code].map((ch, i) => {
+              const t = typed[i];
+              const state = t === undefined ? (i === typed.length ? "cur" : "dim") : t === ch ? `t-${cls[i]}` : "bad";
+              return <span key={i} className={state}>{ch}</span>;
+            })}
+          </code>
+        </div>
+        <div className="nb-tg-prompt">
+          <span aria-hidden="true">&gt;&gt;&gt;</span>
+          <input
+            ref={inputRef} className="nb-mono" value={typed} onChange={onChange} onKeyDown={onKeyDown}
+            onPaste={(e) => e.preventDefault()} placeholder="Gõ lệnh ở đây" autoFocus autoComplete="off" autoCorrect="off"
+            autoCapitalize="off" spellCheck={false} aria-label="Ô gõ lệnh"
+          />
+        </div>
+      </div>
+      <p className="nb-tg-meaning"><b>Ý nghĩa</b> {snippet.hint}</p>
+      <TypingKeyboard nextChar={snippet.code[typed.length]} press={press} />
     </div>
   );
 }
@@ -5962,64 +6091,148 @@ function App() {
         /* -------------------------------------------------------------- */
         /*  GÕ LỆNH PYTHON                                               */
         /* -------------------------------------------------------------- */
-        .nb-tg { display: flex; flex-direction: column; gap: 14px; max-width: 920px; margin: 0 auto; }
-        .nb-tg-hero { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 26px 28px; border-radius: 16px; color: #fff; background: linear-gradient(120deg, #1b2b6b 0%, #2563eb 60%, #22b8c7 100%); }
-        .nb-tg-hero h2 { margin: 6px 0 8px; font-size: 30px; letter-spacing: -.02em; }
-        .nb-tg-hero p { margin: 0; max-width: 560px; color: rgba(255,255,255,.82); font-size: 13.5px; line-height: 1.6; }
-        .nb-tg-hero .nb-eyebrow { color: #c8d7ec; }
-        .nb-tg-hero-icon { flex: none; display: grid; place-items: center; width: 64px; height: 64px; border-radius: 16px; background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.25); }
-        .nb-tg-panel { display: flex; flex-direction: column; gap: 12px; padding: 18px; background: #fff; border: 1px solid #e1e8f2; border-radius: 14px; }
-        .nb-tg-panel h3 { margin: 0; font-size: 14px; }
+        .nb-tg { --tg-bg: #0e1b2b; --tg-dim: #6f829b; --tg-p: #e8eef7; --tg-k: #8cb4ff; --tg-b: #5fd7b0; --tg-s: #f5c26b; --tg-n: #c4a7ff; --tg-f: #7fe3f0;
+          --tg-ok: #1f9d6b; --tg-bad: #d64545; --tg-amber: #c98a12; display: flex; flex-direction: column; gap: 18px; max-width: 960px; margin: 0 auto; }
+        .nb-tg-head h2 { margin: 0 0 6px; font-size: 28px; letter-spacing: -.02em; }
+        .nb-tg-head p { margin: 0; max-width: 560px; color: var(--slate); font-size: 14px; line-height: 1.6; }
+        .nb-tg-menu { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 22px; align-items: start; }
+        .nb-tg-choose { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+        .nb-tg-block { display: flex; flex-direction: column; gap: 10px; }
+        .nb-tg-block h3 { margin: 0; font-size: 13px; color: var(--slate); font-weight: 700; }
+        .nb-tg-topics { display: flex; flex-direction: column; background: #fff; border: 1px solid #e1e8f2; border-radius: 14px; overflow: hidden; }
+        .nb-tg-topic { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 16px; text-align: left; font: inherit; color: var(--ink); background: transparent; border: 0; border-top: 1px solid #edf1f6; border-left: 3px solid transparent; cursor: pointer; transition: background .15s; }
+        .nb-tg-topic:first-child { border-top: 0; }
+        .nb-tg-topic strong { font-size: 13.5px; }
+        .nb-tg-topic code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #7a8aa2; font: 500 12px 'JetBrains Mono', monospace; }
+        .nb-tg-topic span { color: var(--slate); font-size: 11.5px; white-space: nowrap; }
+        .nb-tg-topic:hover { background: #f5f9fc; }
+        .nb-tg-topic.active { background: #eef5ff; border-left-color: #2563eb; }
+        .nb-tg-topic.active code { color: #1e4fb8; }
         .nb-tg-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-        .nb-tg-mode { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; padding: 15px; text-align: left; font: inherit; color: var(--ink); cursor: pointer; border: 1.5px solid #e1e8f2; border-radius: 12px; background: #fbfdff; }
-        .nb-tg-mode svg { color: var(--slate); }
-        .nb-tg-mode span { color: var(--slate); font-size: 12px; line-height: 1.5; }
-        .nb-tg-mode small { margin-top: 3px; color: var(--pen-blue); font: 600 11px 'JetBrains Mono', monospace; }
-        .nb-tg-mode.active { border-color: var(--pen-blue); background: rgba(4,166,199,.07); }
-        .nb-tg-mode.active svg { color: var(--pen-blue); }
-        .nb-tg-start { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .nb-tg-mode { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; align-items: start; padding: 14px 16px; text-align: left; font: inherit; color: var(--ink); cursor: pointer; background: #fff; border: 1.5px solid #e1e8f2; border-radius: 13px; transition: border-color .15s, background .15s; }
+        .nb-tg-mode-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; color: var(--slate); background: #eef2f7; }
+        .nb-tg-mode-text { display: flex; flex-direction: column; gap: 3px; }
+        .nb-tg-mode-text strong { font-size: 14px; }
+        .nb-tg-mode-text span { color: var(--slate); font-size: 12px; line-height: 1.5; }
+        .nb-tg-mode small { grid-column: 2; color: #1e4fb8; font: 600 11.5px 'JetBrains Mono', monospace; }
+        .nb-tg-mode.active { border-color: #2563eb; background: #f3f8ff; }
+        .nb-tg-mode.active .nb-tg-mode-icon { color: #fff; background: #2563eb; }
+        .nb-tg-side { position: sticky; top: 14px; display: flex; flex-direction: column; gap: 12px; }
+        .nb-tg-start-btn { width: 100%; justify-content: center; padding: 13px 18px; font-size: 15px; }
+        .nb-tg-side .nb-sub { margin: 0; font-size: 12px; line-height: 1.6; }
+        .nb-tg-editor { display: flex; flex-direction: column; border-radius: 14px; background: var(--tg-bg); box-shadow: 0 14px 34px rgba(14,27,43,.22); overflow: hidden; border: 2px solid transparent; }
+        .nb-tg-tab { display: flex; align-items: center; gap: 7px; padding: 9px 14px; color: #9fb0c6; background: rgba(255,255,255,.05); font: 500 12px 'JetBrains Mono', monospace; }
+        .nb-tg-tab span { margin-left: auto; padding: 2px 8px; border-radius: 99px; color: #cfe0f5; background: rgba(255,255,255,.09); font: 600 11px 'Be Vietnam Pro', sans-serif; }
+        .nb-tg-line { display: flex; gap: 14px; padding: 22px 18px; font: 600 22px/1.65 'JetBrains Mono', monospace; }
+        .nb-tg-line code { font: inherit; white-space: pre-wrap; word-break: break-all; color: var(--tg-p); }
+        .nb-tg-gutter { color: #44566e; user-select: none; }
+        .nb-tg-line span, .nb-tg-colored span { transition: color .08s; }
+        .t-p { color: var(--tg-p); } .t-k { color: var(--tg-k); } .t-b { color: var(--tg-b); } .t-s { color: var(--tg-s); } .t-n { color: var(--tg-n); } .t-f { color: var(--tg-f); }
+        .t-dim, .nb-tg-line .dim { color: var(--tg-dim); }
+        .nb-tg-line .cur { color: #fff; background: rgba(255,255,255,.14); box-shadow: inset 0 -2px #22b8c7; border-radius: 2px; }
+        .nb-tg-line .bad { color: #fff; background: var(--tg-bad); border-radius: 3px; }
+        .nb-tg-caret { display: inline-block; width: 2px; height: 1.15em; margin-left: 1px; vertical-align: text-bottom; background: #22b8c7; animation: nbTgCaret 1s steps(1) infinite; }
+        @keyframes nbTgCaret { 50% { opacity: 0; } }
+        .nb-tg-editor.demo { box-shadow: 0 10px 26px rgba(14,27,43,.18); }
+        .nb-tg-editor.demo .nb-tg-line { padding: 18px 16px; font-size: 16px; min-height: 84px; }
+        .nb-tg-demo-hint { padding: 0 16px 16px 44px; color: #8ea2bd; font-size: 12px; }
+        .nb-tg-prompt { display: flex; align-items: center; gap: 10px; padding: 0 16px 16px; }
+        .nb-tg-prompt > span { color: #5fd7b0; font: 700 15px 'JetBrains Mono', monospace; }
+        .nb-tg-prompt input { flex: 1; min-width: 0; padding: 11px 14px; border-radius: 10px; border: 1.5px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06); color: #fff; font-size: 17px; outline: none; }
+        .nb-tg-prompt input::placeholder { color: #6f829b; }
+        .nb-tg-prompt input:focus { border-color: #22b8c7; box-shadow: 0 0 0 3px rgba(34,184,199,.2); }
+        .nb-tg-editor.ok { animation: nbTgOk .4s ease; }
+        .nb-tg-editor.bad { animation: nbTgBad .28s ease; }
+        @keyframes nbTgOk { 0% { border-color: #3ddc97; } 100% { border-color: transparent; } }
+        @keyframes nbTgBad { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-4px); border-color: var(--tg-bad); } 75% { transform: translateX(4px); } }
+        .nb-tg-meaning { margin: 0; padding: 0 4px; color: var(--ink); font-size: 14px; line-height: 1.6; }
+        .nb-tg-meaning b { margin-right: 8px; color: #1e4fb8; }
         .nb-tg-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-        .nb-tg-time { display: inline-flex; align-items: center; gap: 7px; padding: 8px 14px; border-radius: 9px; color: #1e4fb8; background: #e6efff; font: 700 15px 'JetBrains Mono', monospace; }
-        .nb-tg-time.warn { color: var(--red-pen); background: rgba(178,58,58,.1); }
-        .nb-tg-track { height: 6px; border-radius: 99px; background: #e7edf5; overflow: hidden; }
-        .nb-tg-track span { display: block; height: 100%; background: linear-gradient(90deg, #2563eb, #22b8c7); transition: width .2s linear; }
-        .nb-tg-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-        .nb-tg-stats.big { grid-template-columns: repeat(3, 1fr); }
-        .nb-tg-stats > div { display: flex; flex-direction: column; gap: 3px; padding: 12px 14px; background: #fff; border: 1px solid #e1e8f2; border-radius: 12px; }
-        .nb-tg-stats strong { font: 700 22px 'JetBrains Mono', monospace; color: var(--ink); }
-        .nb-tg-stats span { color: var(--slate); font-size: 11px; }
-        .nb-tg-stats > div.hot { border-color: #f2b45a; background: #fff8e8; }
-        .nb-tg-stats > div.hot strong { color: #b86a00; }
-        .nb-tg-card { display: flex; flex-direction: column; gap: 16px; padding: 22px; background: #fff; border: 2px solid #e1e8f2; border-radius: 16px; cursor: text; }
-        .nb-tg-card.ok { animation: nbTgOk .35s ease; }
-        .nb-tg-card.bad { animation: nbTgBad .3s ease; }
-        @keyframes nbTgOk { 0% { border-color: #2e9e6d; box-shadow: 0 0 0 4px rgba(46,158,109,.2); } 100% { border-color: #e1e8f2; box-shadow: none; } }
-        @keyframes nbTgBad { 0%,100% { transform: translateX(0); border-color: #d9534f; } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
-        .nb-tg-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-        .nb-tg-code { padding: 18px 16px; border-radius: 12px; background: #0f1b2d; font: 600 22px/1.7 'JetBrains Mono', monospace; white-space: pre-wrap; word-break: break-all; color: #7d8aa0; }
-        .nb-tg-ch.ok { color: #5fe0a0; }
-        .nb-tg-ch.bad { color: #fff; background: #d9534f; border-radius: 3px; }
-        .nb-tg-ch.cur { color: #fff; background: rgba(255,255,255,.18); border-bottom: 2px solid #22b8c7; }
-        .nb-tg-input { width: 100%; padding: 14px 16px; border: 2px solid #cfdaea; border-radius: 12px; font-size: 18px; color: var(--ink); background: #fbfdff; outline: none; }
-        .nb-tg-input:focus { border-color: var(--pen-blue); box-shadow: 0 0 0 4px rgba(4,166,199,.14); }
-        .nb-tg-result-hero { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 26px 28px; border-radius: 16px; color: #fff; background: linear-gradient(120deg, #1b2b6b, #2563eb 60%, #22b8c7); }
-        .nb-tg-result-hero h2 { margin: 0; font-size: 30px; }
-        .nb-tg-result-hero .nb-eyebrow { color: #c8d7ec; }
-        .nb-tg-record { display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; padding: 5px 11px; border-radius: 99px; color: #5a3b00; background: #ffd770; font-size: 12px; font-weight: 700; }
-        .nb-tg-missed { display: flex; flex-direction: column; gap: 8px; }
-        .nb-tg-missed > div { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-radius: 10px; background: #fbfdff; border: 1px solid #e1e8f2; }
-        .nb-tg-missed code { font: 600 14px 'JetBrains Mono', monospace; color: #1e4fb8; word-break: break-all; }
-        .nb-tg-missed span { color: var(--slate); font-size: 12px; }
+        .nb-tg-ring { position: relative; width: 52px; height: 52px; display: grid; place-items: center; }
+        .nb-tg-ring svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+        .nb-tg-ring circle { fill: none; stroke-width: 4; }
+        .nb-tg-ring .bg { stroke: #e3eaf3; }
+        .nb-tg-ring .fg { stroke: #2563eb; stroke-linecap: round; transition: stroke-dashoffset .25s linear, stroke .3s; }
+        .nb-tg-ring.warn .fg { stroke: var(--tg-bad); }
+        .nb-tg-ring b { font: 700 16px 'JetBrains Mono', monospace; color: var(--ink); }
+        .nb-tg-ring.warn b { color: var(--tg-bad); }
+        .nb-tg-progress { flex: 1; max-width: 320px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--slate); font-weight: 600; }
+        .nb-tg-progress i { display: block; height: 6px; border-radius: 99px; background: #e3eaf3; overflow: hidden; }
+        .nb-tg-progress b { display: block; height: 100%; background: #2563eb; transition: width .25s; }
+        .nb-tg-strip { display: grid; grid-template-columns: 1.1fr 1.6fr .8fr .8fr; align-items: center; background: #fff; border: 1px solid #e1e8f2; border-radius: 14px; }
+        .nb-tg-strip > div { display: flex; flex-direction: column; gap: 4px; padding: 12px 18px; border-left: 1px solid #edf1f6; min-width: 0; }
+        .nb-tg-strip > div:first-child { border-left: 0; }
+        .nb-tg-strip span { color: var(--slate); font-size: 12px; }
+        .nb-tg-strip strong { font: 700 24px 'JetBrains Mono', monospace; color: var(--ink); line-height: 1.1; }
+        .nb-tg-score { position: relative; }
+        .nb-tg-gain { position: absolute; right: 14px; top: 8px; color: var(--tg-ok); font: 700 14px 'JetBrains Mono', monospace; font-style: normal; animation: nbTgGain .9s ease-out forwards; pointer-events: none; }
+        @keyframes nbTgGain { 0% { opacity: 0; transform: translateY(8px); } 20% { opacity: 1; } 100% { opacity: 0; transform: translateY(-14px); } }
+        .nb-tg-pips { display: flex; gap: 4px; }
+        .nb-tg-pips i { flex: 1; height: 9px; border-radius: 3px; background: #e3eaf3; transition: background .15s; }
+        .nb-tg-pips i.on { background: #2563eb; }
+        .nb-tg-combo.hot .nb-tg-pips i.on { background: var(--tg-amber); }
+        .nb-tg-combo.hot span { color: #8a5a00; font-weight: 600; }
+        .nb-tg-kb { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 14px 12px 10px; background: #fff; border: 1px solid #e1e8f2; border-radius: 14px; user-select: none; }
+        .nb-tg-kb-row { display: flex; gap: 5px; justify-content: center; }
+        .nb-tg-key { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 42px; height: 42px; border-radius: 8px; border: 1px solid #d9e2ee; border-bottom-width: 3px; background: #f6f9fc; color: #44566e; font: 600 13px 'JetBrains Mono', monospace; transition: transform .06s, background .1s; }
+        .nb-tg-key small { position: absolute; top: 2px; left: 5px; font-size: 9px; color: #8a98ac; font-weight: 500; }
+        .nb-tg-key.f0 { background: #fdf0f0; } .nb-tg-key.f1 { background: #fff6e8; } .nb-tg-key.f2 { background: #eefaf3; } .nb-tg-key.f3 { background: #eef4ff; } .nb-tg-key.f4 { background: #f4f0fd; }
+        .nb-tg-key.wide { width: 74px; font-size: 11px; background: #eef2f7; }
+        .nb-tg-key.space { width: 300px; font-size: 11px; background: #f4f0fd; }
+        .nb-tg-key.target { background: #2563eb; border-color: #1b4fc4; color: #fff; box-shadow: 0 0 0 3px rgba(37,99,235,.25); }
+        .nb-tg-key.target small { color: #cfe0ff; }
+        .nb-tg-key.down { transform: translateY(2px); background: #cfe0ff; border-bottom-width: 1px; }
+        .nb-tg-key.bad { background: #ffd9d9; border-color: var(--tg-bad); color: #8f1f1f; }
+        .nb-tg-kb-legend { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; margin-top: 6px; color: var(--slate); font-size: 11px; }
+        .nb-tg-kb-legend span { display: inline-flex; align-items: center; gap: 5px; }
+        .nb-tg-kb-legend i { width: 11px; height: 11px; border-radius: 3px; border: 1px solid #d0d9e6; }
+        .nb-tg-kb-legend .f0 { background: #fdf0f0; } .nb-tg-kb-legend .f1 { background: #fff6e8; } .nb-tg-kb-legend .f2 { background: #eefaf3; } .nb-tg-kb-legend .f3 { background: #eef4ff; } .nb-tg-kb-legend .f4 { background: #f4f0fd; }
+        .nb-tg-result { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 18px; align-items: stretch; }
+        .nb-tg-result-main { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 28px; border-radius: 16px; background: var(--tg-bg); color: #fff; }
+        .nb-tg-result-mode { color: #9fb0c6; font-size: 13px; }
+        .nb-tg-result-main h2 { margin: 0; font-size: 26px; letter-spacing: -.01em; }
+        .nb-tg-wpm { display: flex; align-items: baseline; gap: 10px; }
+        .nb-tg-wpm strong { font: 700 76px/1 'JetBrains Mono', monospace; color: var(--tg-f); }
+        .nb-tg-wpm span { color: #9fb0c6; font-size: 14px; }
+        .nb-tg-record { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 99px; color: #4d3200; background: #ffd770; font-size: 12.5px; font-weight: 700; }
+        .nb-tg-result-main .nb-sub { color: #9fb0c6; margin: 0; }
+        .nb-tg-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+        .nb-tg-result-main .nb-btn-ghost { color: #fff; border-color: rgba(255,255,255,.3); background: transparent; }
+        .nb-tg-result-stats { margin: 0; display: flex; flex-direction: column; background: #fff; border: 1px solid #e1e8f2; border-radius: 16px; overflow: hidden; }
+        .nb-tg-result-stats > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 15px 20px; border-top: 1px solid #edf1f6; }
+        .nb-tg-result-stats > div:first-child { border-top: 0; }
+        .nb-tg-result-stats dt { color: var(--slate); font-size: 13px; }
+        .nb-tg-result-stats dd { margin: 0; font: 700 20px 'JetBrains Mono', monospace; color: var(--ink); }
+        .nb-tg-missed { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .nb-tg-missed > div { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 12px; background: var(--tg-bg); min-width: 0; }
+        .nb-tg-missed code.nb-tg-colored { font: 600 14px/1.5 'JetBrains Mono', monospace; word-break: break-all; }
+        .nb-tg-missed span { color: #9fb0c6; font-size: 12px; }
+        .nb-tg button:focus-visible { outline: 3px solid rgba(37,99,235,.45); outline-offset: 2px; }
+        @media (max-width: 860px) {
+          .nb-tg-menu { grid-template-columns: 1fr; }
+          .nb-tg-side { position: static; order: -1; }
+          .nb-tg-result { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 760px) {
+          .nb-tg-kb { display: none; }
+        }
         @media (max-width: 640px) {
-          .nb-tg-hero, .nb-tg-result-hero { padding: 20px; }
-          .nb-tg-hero h2, .nb-tg-result-hero h2 { font-size: 24px; }
-          .nb-tg-hero-icon { display: none; }
+          .nb-tg-head h2 { font-size: 23px; }
+          .nb-tg-topic { grid-template-columns: 1fr auto; }
+          .nb-tg-topic code { display: none; }
           .nb-tg-modes { grid-template-columns: 1fr; }
-          .nb-tg-stats { grid-template-columns: repeat(2, 1fr); }
-          .nb-tg-stats.big { grid-template-columns: repeat(2, 1fr); }
-          .nb-tg-code { font-size: 16px; padding: 14px 12px; }
-          .nb-tg-card { padding: 14px; }
-          .nb-tg-input { font-size: 16px; }
+          .nb-tg-strip { grid-template-columns: 1fr 1fr; }
+          .nb-tg-strip > div { border-left: 0; border-top: 1px solid #edf1f6; padding: 10px 14px; }
+          .nb-tg-strip > div:nth-child(-n+2) { border-top: 0; }
+          .nb-tg-strip > div:nth-child(even) { border-left: 1px solid #edf1f6; }
+          .nb-tg-line { font-size: 17px; padding: 16px 12px; gap: 10px; }
+          .nb-tg-prompt input { font-size: 16px; }
+          .nb-tg-wpm strong { font-size: 58px; }
+          .nb-tg-result-main { padding: 22px; }
+          .nb-tg-missed { grid-template-columns: 1fr; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .nb-tg *, .nb-tg-editor { animation: none !important; transition: none !important; }
         }
       `}</style>
 
