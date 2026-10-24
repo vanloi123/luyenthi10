@@ -1,10 +1,10 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useRef, useCallback, useReducer } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Home, BookOpen, Code2, Trophy, MessageSquare, Clock, Users, Plus,
   Send, CheckCircle2, XCircle, Loader2, Flame, ChevronRight, ChevronLeft, Search,
   Award, TrendingUp, AlertCircle, X, Play, Lock, GraduationCap, ListChecks,
-  RefreshCw, Eye, EyeOff, LogOut, Pencil, Trash2, Save, UploadCloud, ExternalLink,
+  RefreshCw, Eye, EyeOff, LogOut, Pencil, Trash2, Save, UploadCloud, ExternalLink, Keyboard,
 } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
 import { SUPABASE_URL, SUPABASE_ANON_KEY, SISTER_SITE_URL, SISTER_SITE_LABEL } from "./config.js";
@@ -3651,6 +3651,360 @@ function AccountsView({ accounts, resetPassword, addAccount, removeAccount, curr
 /*  APP SHELL                                                               */
 /* ---------------------------------------------------------------------- */
 
+/* ====================================================================== */
+/*  GIẢI TRÍ: GÕ LỆNH PYTHON                                              */
+/* ====================================================================== */
+const TYPING_CATEGORIES = [
+  { key: "all", label: "Tất cả" },
+  { key: "co-ban", label: "Cơ bản" },
+  { key: "chuoi", label: "Chuỗi" },
+  { key: "list", label: "List" },
+  { key: "dict", label: "Dict & Set" },
+  { key: "lap", label: "Điều kiện & vòng lặp" },
+  { key: "ham", label: "Hàm, module & file" },
+];
+const TYPING_SNIPPETS = [
+  ["co-ban", 'print("Xin chao")', "In một dòng chữ ra màn hình"],
+  ["co-ban", 'name = input("Ten: ")', "Nhập một chuỗi từ bàn phím"],
+  ["co-ban", "n = int(input())", "Nhập một số nguyên"],
+  ["co-ban", "x = float(input())", "Nhập một số thực"],
+  ["co-ban", "a, b = map(int, input().split())", "Nhập hai số nguyên trên cùng một dòng"],
+  ["co-ban", "print(a + b)", "In tổng của a và b"],
+  ["co-ban", 'print(f"Tong = {a + b}")', "In chuỗi có chèn giá trị biến (f-string)"],
+  ["co-ban", "print(a // b, a % b)", "Thương nguyên và số dư của phép chia"],
+  ["co-ban", "print(2 ** 10)", "Lũy thừa: 2 mũ 10"],
+  ["co-ban", "print(abs(-5))", "Giá trị tuyệt đối"],
+  ["co-ban", "print(round(3.14159, 2))", "Làm tròn đến 2 chữ số thập phân"],
+  ["co-ban", "print(max(a, b))", "Số lớn hơn trong hai số"],
+  ["co-ban", "print(min(a, b, c))", "Số nhỏ nhất trong các số"],
+  ["co-ban", "print(type(x))", "Xem kiểu dữ liệu của biến"],
+  ["co-ban", "print(divmod(17, 5))", "Trả về cả thương và số dư"],
+  ["co-ban", 'print("a", "b", sep="-")', "In nhiều giá trị, ngăn cách bằng dấu '-'"],
+  ["co-ban", 'print(n, end=" ")', "In xong không xuống dòng"],
+  ["co-ban", "x = int(\"123\") + 1", "Đổi chuỗi sang số rồi cộng 1"],
+  ["chuoi", "s = s.upper()", "Chuyển thành chữ HOA"],
+  ["chuoi", "s = s.lower()", "Chuyển thành chữ thường"],
+  ["chuoi", "s = s.strip()", "Xóa khoảng trắng hai đầu chuỗi"],
+  ["chuoi", 'words = s.split(",")', "Tách chuỗi thành danh sách theo dấu phẩy"],
+  ["chuoi", 'print(" ".join(words))', "Ghép danh sách thành chuỗi, cách nhau bởi dấu cách"],
+  ["chuoi", 's = s.replace("a", "b")', "Thay mọi chữ a bằng b"],
+  ["chuoi", "print(s[::-1])", "In chuỗi đảo ngược"],
+  ["chuoi", "print(len(s))", "Độ dài chuỗi"],
+  ["chuoi", 'print(s.find("x"))', "Vị trí đầu tiên của 'x' (-1 nếu không có)"],
+  ["chuoi", 'print(s.count("a"))', "Đếm số lần xuất hiện của 'a'"],
+  ["chuoi", 'print(s.startswith("ab"))', "Kiểm tra chuỗi có bắt đầu bằng 'ab'"],
+  ["chuoi", "print(s.isdigit())", "Kiểm tra chuỗi chỉ gồm chữ số"],
+  ["chuoi", "print(s.title())", "Viết hoa chữ cái đầu mỗi từ"],
+  ["chuoi", "print(s[1:4])", "Cắt chuỗi từ vị trí 1 đến 3"],
+  ["chuoi", "print(ord(\"a\"), chr(98))", "Mã ASCII của ký tự và ký tự từ mã"],
+  ["chuoi", 'print(f"{x:.2f}")', "In số thực với 2 chữ số thập phân"],
+  ["chuoi", 'print("ab" * 3)', "Lặp chuỗi 3 lần"],
+  ["list", "a = [1, 2, 3]", "Tạo danh sách (list)"],
+  ["list", "a.append(4)", "Thêm phần tử vào cuối"],
+  ["list", "a.insert(0, 9)", "Chèn 9 vào vị trí đầu tiên"],
+  ["list", "a.pop()", "Lấy ra và xóa phần tử cuối"],
+  ["list", "a.remove(3)", "Xóa phần tử có giá trị 3 (lần đầu tiên)"],
+  ["list", "a.sort(reverse=True)", "Sắp xếp giảm dần ngay trên list"],
+  ["list", "b = sorted(a)", "Tạo list mới đã sắp xếp tăng dần"],
+  ["list", "a.reverse()", "Đảo ngược list"],
+  ["list", "print(a.index(2))", "Vị trí của giá trị 2"],
+  ["list", "a.extend([4, 5])", "Nối thêm nhiều phần tử vào cuối"],
+  ["list", "print(a[-1])", "Phần tử cuối cùng"],
+  ["list", "print(a[1:3])", "Lát cắt từ vị trí 1 đến 2"],
+  ["list", "print(sum(a) / len(a))", "Trung bình cộng của list"],
+  ["list", "b = [x * x for x in a]", "List comprehension: bình phương từng phần tử"],
+  ["list", "b = [x for x in a if x % 2 == 0]", "Lọc ra các số chẵn"],
+  ["list", "a = list(map(int, input().split()))", "Nhập một dãy số trên một dòng"],
+  ["list", "b = a.copy()", "Sao chép list"],
+  ["list", "a = list(range(1, 11))", "Tạo list [1, 2, ..., 10]"],
+  ["list", "print(any(a), all(a))", "Có ít nhất một / tất cả phần tử đúng"],
+  ["list", "for i, x in enumerate(a):", "Duyệt list kèm chỉ số"],
+  ["dict", 'd = {"a": 1, "b": 2}', "Tạo từ điển (dict)"],
+  ["dict", 'd["c"] = 3', "Thêm hoặc cập nhật khóa 'c'"],
+  ["dict", 'print(d.get("x", 0))', "Lấy giá trị, không có khóa thì trả về 0"],
+  ["dict", "for k, v in d.items():", "Duyệt từng cặp khóa - giá trị"],
+  ["dict", 'print("a" in d)', "Kiểm tra khóa có tồn tại"],
+  ["dict", "print(list(d.keys()))", "Danh sách các khóa"],
+  ["dict", "print(list(d.values()))", "Danh sách các giá trị"],
+  ["dict", 'del d["a"]', "Xóa khóa 'a'"],
+  ["dict", 'd.update({"x": 1})', "Gộp thêm cặp khóa - giá trị"],
+  ["dict", "s = set(a)", "Tạo tập hợp, loại bỏ phần tử trùng"],
+  ["dict", "s.add(5)", "Thêm phần tử vào tập hợp"],
+  ["dict", "s.discard(2)", "Xóa phần tử (không lỗi nếu không có)"],
+  ["dict", "print(s1 | s2, s1 & s2)", "Hợp và giao của hai tập hợp"],
+  ["dict", "print(len(set(a)))", "Số phần tử khác nhau trong list"],
+  ["dict", "d = dict(zip(a, b))", "Ghép hai list thành dict"],
+  ["lap", "for i in range(n):", "Lặp i từ 0 đến n-1"],
+  ["lap", "for i in range(1, n + 1):", "Lặp i từ 1 đến n"],
+  ["lap", "for i in range(n, 0, -1):", "Lặp ngược từ n về 1"],
+  ["lap", "while n > 0:", "Lặp khi n còn lớn hơn 0"],
+  ["lap", "if x % 2 == 0:", "Kiểm tra x là số chẵn"],
+  ["lap", "elif x > 0:", "Nhánh điều kiện tiếp theo"],
+  ["lap", "else:", "Nhánh còn lại"],
+  ["lap", "for x in a:", "Duyệt từng phần tử của list"],
+  ["lap", "for x, y in zip(a, b):", "Duyệt song song hai list"],
+  ["lap", "if x in a:", "Kiểm tra x có trong list"],
+  ["lap", "if not a:", "Kiểm tra list rỗng"],
+  ["lap", "while True:", "Vòng lặp vô hạn (dùng break để thoát)"],
+  ["lap", "if a > b and b > c:", "Hai điều kiện cùng đúng"],
+  ["lap", "break", "Thoát khỏi vòng lặp"],
+  ["lap", "continue", "Bỏ qua phần còn lại, sang vòng kế tiếp"],
+  ["ham", "def tong(a, b):", "Khai báo hàm có hai tham số"],
+  ["ham", "return a + b", "Trả về kết quả của hàm"],
+  ["ham", "f = lambda x: x * 2", "Hàm ẩn danh (lambda)"],
+  ["ham", "import math", "Nạp thư viện toán học"],
+  ["ham", "print(math.sqrt(16))", "Căn bậc hai"],
+  ["ham", "print(math.gcd(12, 18))", "Ước chung lớn nhất"],
+  ["ham", "print(math.floor(2.7), math.ceil(2.1))", "Làm tròn xuống / làm tròn lên"],
+  ["ham", "from math import pi", "Chỉ nạp số pi từ math"],
+  ["ham", "import sys", "Nạp thư viện hệ thống"],
+  ["ham", "input = sys.stdin.readline", "Đọc nhập nhanh hơn trong bài thi"],
+  ["ham", "try:", "Bắt đầu khối thử chạy"],
+  ["ham", "except ValueError:", "Bắt lỗi khi đổi kiểu sai"],
+  ["ham", 'with open("a.txt") as f:', "Mở file an toàn, tự đóng khi xong"],
+  ["ham", "data = f.read()", "Đọc toàn bộ nội dung file"],
+  ["ham", "class SinhVien:", "Khai báo lớp (class)"],
+  ["ham", "def __init__(self, ten):", "Hàm khởi tạo của lớp"],
+  ["ham", "self.ten = ten", "Lưu thuộc tính cho đối tượng"],
+].map(([cat, code, hint]) => ({ cat, code, hint }));
+
+const TYPING_MODES = {
+  timed: { label: "Thử thách 60 giây", desc: "Gõ càng nhiều lệnh đúng càng tốt trước khi hết giờ.", seconds: 60 },
+  free: { label: "Luyện 15 lệnh", desc: "Không giới hạn thời gian. Gõ chính xác 15 lệnh liên tiếp.", count: 15 },
+};
+
+function shuffleList(list) {
+  const arr = [...list];
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+function typingTitle(wpm) {
+  if (wpm >= 45) return "Siêu tốc độ";
+  if (wpm >= 30) return "Ngón tay thần tốc";
+  if (wpm >= 15) return "Gõ chăm chỉ";
+  return "Tập sự gõ phím";
+}
+
+function TypingGameView({ currentUser }) {
+  const [phase, setPhase] = useState("menu");
+  const [category, setCategory] = useState("all");
+  const [mode, setMode] = useState("timed");
+  const [typed, setTyped] = useState("");
+  const [result, setResult] = useState(null);
+  const [, bump] = useReducer((x) => x + 1, 0);
+  const inputRef = useRef(null);
+  const game = useRef(null);
+  const bestKey = (m) => `typing-best:${currentUser.id}:${m}`;
+  const [bests, setBests] = useState(() => ({ timed: lsGet(bestKey("timed")), free: lsGet(bestKey("free")) }));
+
+  const pool = useMemo(() => TYPING_SNIPPETS.filter((s) => category === "all" || s.cat === category), [category]);
+
+  function newGame() {
+    const need = mode === "timed" ? 300 : TYPING_MODES.free.count;
+    let queue = [];
+    while (queue.length < need) queue = queue.concat(shuffleList(pool));
+    queue = queue.slice(0, need);
+    game.current = { queue, idx: 0, score: 0, done: 0, chars: 0, keys: 0, errors: 0, combo: 0, bestCombo: 0, missed: [], hadError: false, startedAt: Date.now(), flash: "" };
+    setTyped("");
+    setResult(null);
+    setPhase("play");
+    setTimeout(() => inputRef.current?.focus(), 30);
+  }
+
+  function finish() {
+    const g = game.current;
+    if (!g || g.finished) return;
+    g.finished = true;
+    const elapsed = Math.min(Date.now() - g.startedAt, mode === "timed" ? TYPING_MODES.timed.seconds * 1000 : Infinity);
+    const minutes = Math.max(elapsed / 60000, 1 / 600);
+    const wpm = Math.round(g.chars / 5 / minutes);
+    const accuracy = g.keys ? Math.round(((g.keys - g.errors) / g.keys) * 100) : 100;
+    const summary = { score: g.score, wpm, accuracy, done: g.done, bestCombo: g.bestCombo, seconds: Math.round(elapsed / 1000), missed: g.missed, mode, date: new Date().toISOString() };
+    const previous = lsGet(bestKey(mode));
+    const isRecord = g.score > 0 && (!previous || g.score > previous.score);
+    if (isRecord) { lsSet(bestKey(mode), { score: g.score, wpm, accuracy, date: summary.date }); setBests((b) => ({ ...b, [mode]: { score: g.score, wpm, accuracy, date: summary.date } })); }
+    setResult({ ...summary, isRecord, previous });
+    setPhase("result");
+  }
+
+  useEffect(() => {
+    if (phase !== "play") return undefined;
+    const timer = setInterval(() => {
+      const g = game.current;
+      if (!g) return;
+      if (mode === "timed" && Date.now() - g.startedAt >= TYPING_MODES.timed.seconds * 1000) finish();
+      else bump();
+    }, 200);
+    return () => clearInterval(timer);
+  }, [phase, mode]);
+
+  function nextSnippet() {
+    const g = game.current;
+    g.idx += 1;
+    g.hadError = false;
+    setTyped("");
+    if (mode === "free" && g.idx >= TYPING_MODES.free.count) finish();
+  }
+  function onChange(event) {
+    const g = game.current;
+    if (!g || g.finished) return;
+    const snippet = g.queue[g.idx];
+    const value = event.target.value;
+    if (value.length > snippet.code.length) return;
+    for (let i = typed.length; i < value.length; i += 1) {
+      g.keys += 1;
+      if (value[i] !== snippet.code[i]) {
+        g.errors += 1; g.combo = 0; g.hadError = true; g.flash = "bad";
+        if (!g.missed.some((m) => m.code === snippet.code)) g.missed.push(snippet);
+      }
+    }
+    if (value === snippet.code) {
+      const multiplier = 1 + Math.min(g.combo, 10) * 0.1;
+      g.score += Math.round(snippet.code.length * 10 * multiplier);
+      g.chars += snippet.code.length;
+      g.done += 1;
+      g.combo += 1;
+      g.bestCombo = Math.max(g.bestCombo, g.combo);
+      g.flash = "ok";
+      nextSnippet();
+    } else {
+      setTyped(value);
+    }
+    bump();
+  }
+  function skip() {
+    const g = game.current;
+    if (!g || g.finished) return;
+    const snippet = g.queue[g.idx];
+    g.combo = 0;
+    if (!g.missed.some((m) => m.code === snippet.code)) g.missed.push(snippet);
+    nextSnippet();
+    bump();
+    inputRef.current?.focus();
+  }
+  function quit() { if (game.current) game.current.finished = true; setPhase("menu"); }
+
+  if (phase === "menu") {
+    return (
+      <div className="nb-tg">
+        <div className="nb-tg-hero">
+          <div><div className="nb-eyebrow">Giải trí · Luyện phản xạ</div><h2>Gõ lệnh Python</h2>
+            <p>Gõ đúng và nhanh các hàm, câu lệnh quen thuộc của Python. Vừa chơi vừa nhớ cú pháp để làm bài thi không bị sai chính tả.</p></div>
+          <div className="nb-tg-hero-icon"><Keyboard size={30} /></div>
+        </div>
+        <section className="nb-tg-panel">
+          <h3>1. Chọn chủ đề</h3>
+          <div className="nb-filter-row" style={{ margin: 0 }}>
+            {TYPING_CATEGORIES.map((c) => (
+              <button key={c.key} className={`nb-chip ${category === c.key ? "active" : ""}`} onClick={() => setCategory(c.key)}>
+                {c.label} · {TYPING_SNIPPETS.filter((s) => c.key === "all" || s.cat === c.key).length}
+              </button>
+            ))}
+          </div>
+        </section>
+        <section className="nb-tg-panel">
+          <h3>2. Chọn chế độ</h3>
+          <div className="nb-tg-modes">
+            {Object.entries(TYPING_MODES).map(([key, m]) => (
+              <button key={key} className={`nb-tg-mode ${mode === key ? "active" : ""}`} onClick={() => setMode(key)}>
+                {key === "timed" ? <Clock size={20} /> : <ListChecks size={20} />}
+                <strong>{m.label}</strong><span>{m.desc}</span>
+                <small>{bests[key] ? `Kỷ lục của em: ${bests[key].score} điểm · ${bests[key].wpm} WPM` : "Chưa có kỷ lục"}</small>
+              </button>
+            ))}
+          </div>
+        </section>
+        <div className="nb-tg-start">
+          <button className="nb-btn nb-btn-primary" onClick={newGame}><Play size={16} /> Bắt đầu chơi</button>
+          <span className="nb-sub">Gõ đúng liên tiếp để tăng combo (tối đa x2 điểm). Sai một ký tự là mất combo.</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === "result" && result) {
+    return (
+      <div className="nb-tg">
+        <div className="nb-tg-result-hero">
+          <div className="nb-eyebrow">{TYPING_MODES[result.mode].label}</div>
+          <h2>{typingTitle(result.wpm)}</h2>
+          {result.isRecord && <span className="nb-tg-record"><Award size={14} /> Kỷ lục mới!</span>}
+        </div>
+        <div className="nb-tg-stats big">
+          <div><strong>{result.score}</strong><span>Điểm</span></div>
+          <div><strong>{result.wpm}</strong><span>WPM (từ/phút)</span></div>
+          <div><strong>{result.accuracy}%</strong><span>Chính xác</span></div>
+          <div><strong>{result.done}</strong><span>Lệnh hoàn thành</span></div>
+          <div><strong>x{result.bestCombo}</strong><span>Combo cao nhất</span></div>
+          <div><strong>{result.seconds}s</strong><span>Thời gian</span></div>
+        </div>
+        {result.previous && !result.isRecord && <p className="nb-sub">Kỷ lục hiện tại của em: {result.previous.score} điểm · {result.previous.wpm} WPM.</p>}
+        <div className="nb-tg-start">
+          <button className="nb-btn nb-btn-primary" onClick={newGame}><RefreshCw size={16} /> Chơi lại</button>
+          <button className="nb-btn nb-btn-ghost" onClick={() => setPhase("menu")}>Đổi chủ đề / chế độ</button>
+        </div>
+        {result.missed.length > 0 && (
+          <section className="nb-tg-panel">
+            <h3>Các lệnh cần luyện thêm ({result.missed.length})</h3>
+            <div className="nb-tg-missed">
+              {result.missed.map((m) => (<div key={m.code}><code>{m.code}</code><span>{m.hint}</span></div>))}
+            </div>
+          </section>
+        )}
+      </div>
+    );
+  }
+
+  const g = game.current;
+  if (!g) return null;
+  const snippet = g.queue[g.idx] || g.queue[0];
+  const elapsed = Date.now() - g.startedAt;
+  const left = Math.max(0, TYPING_MODES.timed.seconds - elapsed / 1000);
+  const liveWpm = elapsed > 3000 ? Math.round(g.chars / 5 / (elapsed / 60000)) : 0;
+  const liveAcc = g.keys ? Math.round(((g.keys - g.errors) / g.keys) * 100) : 100;
+  const multiplier = (1 + Math.min(g.combo, 10) * 0.1).toFixed(1);
+  const categoryLabel = TYPING_CATEGORIES.find((c) => c.key === snippet.cat)?.label || "";
+
+  return (
+    <div className="nb-tg">
+      <div className="nb-tg-bar">
+        <button className="nb-btn nb-btn-ghost" onClick={quit}><ChevronLeft size={16} /> Thoát</button>
+        {mode === "timed"
+          ? <div className={`nb-tg-time ${left < 10 ? "warn" : ""}`}><Clock size={15} /> {Math.ceil(left)}s</div>
+          : <div className="nb-tg-time"><ListChecks size={15} /> {Math.min(g.idx + 1, TYPING_MODES.free.count)}/{TYPING_MODES.free.count}</div>}
+        <button className="nb-btn nb-btn-ghost" onClick={skip}>Bỏ qua <ChevronRight size={16} /></button>
+      </div>
+      {mode === "timed" && <div className="nb-tg-track"><span style={{ width: `${(left / TYPING_MODES.timed.seconds) * 100}%` }} /></div>}
+      <div className="nb-tg-stats">
+        <div><strong>{g.score}</strong><span>Điểm</span></div>
+        <div className={g.combo >= 3 ? "hot" : ""}><strong>x{multiplier}</strong><span>Combo {g.combo}</span></div>
+        <div><strong>{liveWpm}</strong><span>WPM</span></div>
+        <div><strong>{liveAcc}%</strong><span>Chính xác</span></div>
+      </div>
+      <div className={`nb-tg-card ${g.flash}`} onClick={() => inputRef.current?.focus()} onAnimationEnd={() => { g.flash = ""; }}>
+        <div className="nb-tg-meta"><span className="nb-pill nb-pill-pending">{categoryLabel}</span><span className="nb-sub">{snippet.hint}</span></div>
+        <div className="nb-tg-code" aria-label={snippet.code}>
+          {[...snippet.code].map((ch, i) => {
+            const t = typed[i];
+            const cls = t === undefined ? (i === typed.length ? "cur" : "") : t === ch ? "ok" : "bad";
+            return <span key={i} className={`nb-tg-ch ${cls}`}>{ch}</span>;
+          })}
+        </div>
+        <input
+          ref={inputRef} className="nb-tg-input nb-mono" value={typed} onChange={onChange}
+          onPaste={(e) => e.preventDefault()} onKeyDown={(e) => { if (e.key === "Escape") quit(); }}
+          placeholder="Gõ lệnh ở đây…" autoFocus autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
+          aria-label="Ô gõ lệnh"
+        />
+      </div>
+      <p className="nb-sub" style={{ textAlign: "center" }}>Gõ chính xác từng ký tự, kể cả dấu cách. Tự chuyển sang lệnh tiếp theo khi gõ đúng. Nhấn Esc để thoát.</p>
+    </div>
+  );
+}
+
 const BASE_NAV = [
   { key: "overview", label: "Tổng quan", shortLabel: "Tổng quan", icon: Home },
   { key: "lessons", label: "Bài giảng", shortLabel: "Bài giảng", icon: BookOpen },
@@ -3659,6 +4013,7 @@ const BASE_NAV = [
   { key: "contests", label: "Đề thi thử", shortLabel: "Đề thi", icon: Clock },
   { key: "leaderboard", label: "Bảng xếp hạng", shortLabel: "Xếp hạng", icon: Trophy },
   { key: "discussion", label: "Thảo luận", shortLabel: "Thảo luận", icon: MessageSquare },
+  { key: "typing", label: "Gõ lệnh Python", shortLabel: "Gõ lệnh", icon: Keyboard },
 ];
 const ACCOUNTS_NAV = { key: "accounts", label: "Quản lý tài khoản", shortLabel: "Tài khoản", icon: Users };
 
@@ -5604,6 +5959,68 @@ function App() {
           .nb-xm-problem-row { flex-wrap: wrap; }
           .nb-xm-section { padding: 14px; }
         }
+        /* -------------------------------------------------------------- */
+        /*  GÕ LỆNH PYTHON                                               */
+        /* -------------------------------------------------------------- */
+        .nb-tg { display: flex; flex-direction: column; gap: 14px; max-width: 920px; margin: 0 auto; }
+        .nb-tg-hero { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 26px 28px; border-radius: 16px; color: #fff; background: linear-gradient(120deg, #1b2b6b 0%, #2563eb 60%, #22b8c7 100%); }
+        .nb-tg-hero h2 { margin: 6px 0 8px; font-size: 30px; letter-spacing: -.02em; }
+        .nb-tg-hero p { margin: 0; max-width: 560px; color: rgba(255,255,255,.82); font-size: 13.5px; line-height: 1.6; }
+        .nb-tg-hero .nb-eyebrow { color: #c8d7ec; }
+        .nb-tg-hero-icon { flex: none; display: grid; place-items: center; width: 64px; height: 64px; border-radius: 16px; background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.25); }
+        .nb-tg-panel { display: flex; flex-direction: column; gap: 12px; padding: 18px; background: #fff; border: 1px solid #e1e8f2; border-radius: 14px; }
+        .nb-tg-panel h3 { margin: 0; font-size: 14px; }
+        .nb-tg-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .nb-tg-mode { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; padding: 15px; text-align: left; font: inherit; color: var(--ink); cursor: pointer; border: 1.5px solid #e1e8f2; border-radius: 12px; background: #fbfdff; }
+        .nb-tg-mode svg { color: var(--slate); }
+        .nb-tg-mode span { color: var(--slate); font-size: 12px; line-height: 1.5; }
+        .nb-tg-mode small { margin-top: 3px; color: var(--pen-blue); font: 600 11px 'JetBrains Mono', monospace; }
+        .nb-tg-mode.active { border-color: var(--pen-blue); background: rgba(4,166,199,.07); }
+        .nb-tg-mode.active svg { color: var(--pen-blue); }
+        .nb-tg-start { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .nb-tg-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+        .nb-tg-time { display: inline-flex; align-items: center; gap: 7px; padding: 8px 14px; border-radius: 9px; color: #1e4fb8; background: #e6efff; font: 700 15px 'JetBrains Mono', monospace; }
+        .nb-tg-time.warn { color: var(--red-pen); background: rgba(178,58,58,.1); }
+        .nb-tg-track { height: 6px; border-radius: 99px; background: #e7edf5; overflow: hidden; }
+        .nb-tg-track span { display: block; height: 100%; background: linear-gradient(90deg, #2563eb, #22b8c7); transition: width .2s linear; }
+        .nb-tg-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+        .nb-tg-stats.big { grid-template-columns: repeat(3, 1fr); }
+        .nb-tg-stats > div { display: flex; flex-direction: column; gap: 3px; padding: 12px 14px; background: #fff; border: 1px solid #e1e8f2; border-radius: 12px; }
+        .nb-tg-stats strong { font: 700 22px 'JetBrains Mono', monospace; color: var(--ink); }
+        .nb-tg-stats span { color: var(--slate); font-size: 11px; }
+        .nb-tg-stats > div.hot { border-color: #f2b45a; background: #fff8e8; }
+        .nb-tg-stats > div.hot strong { color: #b86a00; }
+        .nb-tg-card { display: flex; flex-direction: column; gap: 16px; padding: 22px; background: #fff; border: 2px solid #e1e8f2; border-radius: 16px; cursor: text; }
+        .nb-tg-card.ok { animation: nbTgOk .35s ease; }
+        .nb-tg-card.bad { animation: nbTgBad .3s ease; }
+        @keyframes nbTgOk { 0% { border-color: #2e9e6d; box-shadow: 0 0 0 4px rgba(46,158,109,.2); } 100% { border-color: #e1e8f2; box-shadow: none; } }
+        @keyframes nbTgBad { 0%,100% { transform: translateX(0); border-color: #d9534f; } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
+        .nb-tg-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .nb-tg-code { padding: 18px 16px; border-radius: 12px; background: #0f1b2d; font: 600 22px/1.7 'JetBrains Mono', monospace; white-space: pre-wrap; word-break: break-all; color: #7d8aa0; }
+        .nb-tg-ch.ok { color: #5fe0a0; }
+        .nb-tg-ch.bad { color: #fff; background: #d9534f; border-radius: 3px; }
+        .nb-tg-ch.cur { color: #fff; background: rgba(255,255,255,.18); border-bottom: 2px solid #22b8c7; }
+        .nb-tg-input { width: 100%; padding: 14px 16px; border: 2px solid #cfdaea; border-radius: 12px; font-size: 18px; color: var(--ink); background: #fbfdff; outline: none; }
+        .nb-tg-input:focus { border-color: var(--pen-blue); box-shadow: 0 0 0 4px rgba(4,166,199,.14); }
+        .nb-tg-result-hero { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 26px 28px; border-radius: 16px; color: #fff; background: linear-gradient(120deg, #1b2b6b, #2563eb 60%, #22b8c7); }
+        .nb-tg-result-hero h2 { margin: 0; font-size: 30px; }
+        .nb-tg-result-hero .nb-eyebrow { color: #c8d7ec; }
+        .nb-tg-record { display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; padding: 5px 11px; border-radius: 99px; color: #5a3b00; background: #ffd770; font-size: 12px; font-weight: 700; }
+        .nb-tg-missed { display: flex; flex-direction: column; gap: 8px; }
+        .nb-tg-missed > div { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-radius: 10px; background: #fbfdff; border: 1px solid #e1e8f2; }
+        .nb-tg-missed code { font: 600 14px 'JetBrains Mono', monospace; color: #1e4fb8; word-break: break-all; }
+        .nb-tg-missed span { color: var(--slate); font-size: 12px; }
+        @media (max-width: 640px) {
+          .nb-tg-hero, .nb-tg-result-hero { padding: 20px; }
+          .nb-tg-hero h2, .nb-tg-result-hero h2 { font-size: 24px; }
+          .nb-tg-hero-icon { display: none; }
+          .nb-tg-modes { grid-template-columns: 1fr; }
+          .nb-tg-stats { grid-template-columns: repeat(2, 1fr); }
+          .nb-tg-stats.big { grid-template-columns: repeat(2, 1fr); }
+          .nb-tg-code { font-size: 16px; padding: 14px 12px; }
+          .nb-tg-card { padding: 14px; }
+          .nb-tg-input { font-size: 16px; }
+        }
       `}</style>
 
       {loading ? (
@@ -5708,6 +6125,7 @@ function App() {
                   students={students} practiceProblems={problems} refreshExams={refreshExams} setExams={setExams}
                 />
               )}
+              {tab === "typing" && <TypingGameView currentUser={currentUser} />}
               {tab === "leaderboard" && (
                 <LeaderboardView students={students} points={points} solvedCount={solvedCount} currentUser={currentUser} problemsCount={problems.length} />
               )}
